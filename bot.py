@@ -84,35 +84,57 @@ def parse_tweets(html):
     
     # Find all tweet containers
     tweet_divs = soup.find_all('div', class_='timeline-item')
-    print(f"  Found {len(tweet_divs)} total tweets")
+    print(f"  Found {len(tweet_divs)} total tweets on profile")
     
-    for tweet_div in tweet_divs[:10]:  # Check last 10 tweets
+    for idx, tweet_div in enumerate(tweet_divs[:20], 1):  # Check last 20 tweets
         try:
+            print(f"\n  Examining tweet #{idx}...")
+            
             # Get tweet text
             text_elem = tweet_div.find('div', class_='tweet-content')
             if not text_elem:
+                print(f"    ❌ No tweet content found")
                 continue
             
             text = text_elem.get_text(strip=True)
+            print(f"    Text preview: {text[:80]}...")
             
             # Check if it contains the hashtag
-            if HASHTAG.lower() not in text.lower():
+            has_hashtag = HASHTAG.lower() in text.lower()
+            print(f"    Has hashtag {HASHTAG}: {has_hashtag}")
+            
+            if not has_hashtag:
                 continue
             
-            # Check if it's a quote tweet (has quoted tweet in it)
+            # Check if it's a quote tweet - try multiple methods
             quote_elem = tweet_div.find('div', class_='quote')
             if not quote_elem:
+                # Try alternative: look for "replying to" or quoted content differently
+                quote_elem = tweet_div.find('div', class_='quote-text')
+            if not quote_elem:
+                # Try another alternative
+                quote_elem = tweet_div.find('a', class_='quote-link')
+            
+            is_quote = quote_elem is not None
+            print(f"    Is quote tweet: {is_quote}")
+            
+            if not is_quote:
+                print(f"    ⚠️  Has hashtag but not a quote tweet, skipping...")
                 continue
             
             # Extract tweet ID from link
             link_elem = tweet_div.find('a', class_='tweet-link')
+            if not link_elem:
+                link_elem = tweet_div.find('a', class_='tweet-date')
+            
             if link_elem:
                 tweet_url = link_elem.get('href', '')
                 tweet_id = tweet_url.split('/')[-1].replace('#m', '')
             else:
+                print(f"    ❌ Could not find tweet link")
                 continue
             
-            quoted_text = quote_elem.get_text(strip=True)
+            quoted_text = quote_elem.get_text(strip=True) if quote_elem else ""
             
             tweets.append({
                 'id': tweet_id,
@@ -121,13 +143,16 @@ def parse_tweets(html):
                 'url': f"https://x.com/{X_USERNAME}/status/{tweet_id}"
             })
             
-            print(f"  ✅ Found quote tweet with {HASHTAG}: {tweet_id}")
+            print(f"    ✅ FOUND VALID QUOTE TWEET!")
+            print(f"    Tweet ID: {tweet_id}")
             
         except Exception as e:
-            print(f"  ⚠️  Error parsing tweet: {str(e)[:50]}")
+            print(f"    ⚠️  Error parsing tweet: {str(e)}")
+            import traceback
+            traceback.print_exc()
             continue
     
-    print(f"🎯 Found {len(tweets)} quote tweets with hashtag {HASHTAG}")
+    print(f"\n🎯 Total quote tweets found with hashtag {HASHTAG}: {len(tweets)}")
     return tweets
 
 def research_topic(tweet_text):
