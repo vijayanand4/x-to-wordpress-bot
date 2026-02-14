@@ -1,7 +1,7 @@
 import requests
 import json
 import os
-import google.generativeai as genai
+from google import genai
 from datetime import datetime
 import time
 import tweepy
@@ -25,8 +25,9 @@ print(f"🔍 Looking for hashtag: {HASHTAG}")
 print(f"📝 Will post to: {WP_SITE_URL}")
 
 # Initialize Gemini
-genai.configure(api_key=GEMINI_API_KEY)
-model = genai.GenerativeModel('gemini-pro')
+# genai.configure(api_key=GEMINI_API_KEY)
+# model = genai.GenerativeModel('gemini-pro')
+genai_client = genai.Client(api_key=GEMINI_API_KEY)
 
 # Initialize X API (Twitter API v2)
 client = tweepy.Client(
@@ -234,7 +235,10 @@ Original tweet: {tweet['url']}
 """
     
     try:
-        response = model.generate_content(prompt)
+        response = genai_client.models.generate_content(
+        model='gemini-2.0-flash',
+        contents=prompt
+        )
         article = response.text
         print("  ✅ Article generated successfully")
         return article
