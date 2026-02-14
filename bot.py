@@ -24,6 +24,9 @@ print(f"🤖 Bot starting for X user: @{X_USERNAME}")
 print(f"🔍 Looking for hashtag: {HASHTAG}")
 print(f"📝 Will post to: {WP_SITE_URL}")
 
+print(f"🔑 Bearer Token present: {'✅ YES' if X_BEARER_TOKEN else '❌ NO - EMPTY!'}")
+print(f"🔑 Token length: {len(X_BEARER_TOKEN) if X_BEARER_TOKEN else 0}")
+
 # Initialize Gemini
 # genai.configure(api_key=GEMINI_API_KEY)
 # model = genai.GenerativeModel('gemini-pro')
