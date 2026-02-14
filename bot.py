@@ -345,11 +345,11 @@ def research_topic(text):
         return []
 
 # ============================================
-# ARTICLE GENERATION - GROQ
+# ARTICLE GENERATION
 # ============================================
 
 def generate_article(tweet, sources):
-    """Generate 300-word article using Groq (Llama 3)"""
+    """Generate 300-word article using Groq"""
     print("\n✍️  Generating article with Groq AI...")
 
     sources_text = "\n".join([
@@ -366,13 +366,13 @@ RESEARCH SOURCES: {sources_text}
 
 Use this EXACT format:
 
-Title: [Write an engaging, informative title here]
+Title: [Write an engaging informative title here]
 
-[Opening paragraph - hook the reader, introduce the topic]
+[Opening paragraph - hook the reader introduce the topic]
 
-[Main paragraph - key facts, background, important details]
+[Main paragraph - key facts background important details]
 
-[Supporting paragraph - additional context, implications]
+[Supporting paragraph - additional context implications]
 
 [Closing paragraph - conclusion and takeaway]
 
@@ -382,7 +382,7 @@ References:
 
 Original Tweet: {tweet['url']}
 
-Important: Write exactly 300 words, professional tone, factual and informative.
+Important: Write exactly 300 words professional tone factual and informative.
 """
 
     try:
@@ -391,7 +391,7 @@ Important: Write exactly 300 words, professional tone, factual and informative.
             messages=[
                 {
                     "role": "system",
-                    "content": "You are a professional blogger who writes clear, informative 300-word articles."
+                    "content": "You are a professional blogger who writes clear informative 300-word articles."
                 },
                 {
                     "role": "user",
@@ -415,7 +415,7 @@ Important: Write exactly 300 words, professional tone, factual and informative.
 # ============================================
 
 def publish_to_wordpress(article, tweet):
-    """Publish article to WordPress via REST API"""
+    """Publish article to WordPress via REST API with retries"""
     print("\n📤 Publishing to WordPress...")
 
     if not article:
@@ -448,37 +448,67 @@ def publish_to_wordpress(article, tweet):
     content = f"<p>{content}</p>"
 
     print(f"  Title: {title[:70]}")
+    print(f"  Posting to: {WP_SITE_URL}/wp-json/wp/v2/posts")
 
-    try:
-        response = requests.post(
-            f"{WP_SITE_URL}/wp-json/wp/v2/posts",
-            json={
-                'title': title,
-                'content': content,
-                'status': 'publish',
-                'excerpt': f"Auto-generated from: {tweet['url']}"
-            },
-            auth=(WP_USERNAME, WP_PASSWORD),
-            timeout=30
-        )
+    # Try up to 3 times
+    for attempt in range(1, 4):
+        try:
+            print(f"  Attempt {attempt} of 3...")
 
-        print(f"  WordPress Response: {response.status_code}")
+            if attempt > 1:
+                print(f"  Waiting 15 seconds before retry...")
+                time.sleep(15)
 
-        if response.status_code in [200, 201]:
-            result = response.json()
-            print(f"  ✅ Published! → {result.get('link')}")
-            return result
-        elif response.status_code == 401:
-            print("  ❌ 401 - Check WP username and password")
-            print(f"  {response.text[:200]}")
-            return None
-        else:
-            print(f"  ❌ Failed: {response.text[:300]}")
-            return None
+            session = requests.Session()
+            session.headers.update({
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)',
+                'Connection': 'close',
+                'Content-Type': 'application/json'
+            })
 
-    except Exception as e:
-        print(f"  ❌ Error: {str(e)}")
-        return None
+            response = session.post(
+                f"{WP_SITE_URL}/wp-json/wp/v2/posts",
+                json={
+                    'title': title,
+                    'content': content,
+                    'status': 'publish',
+                    'excerpt': f"Auto-generated from: {tweet['url']}"
+                },
+                auth=(WP_USERNAME, WP_PASSWORD),
+                timeout=60,
+                verify=True
+            )
+
+            print(f"  WordPress Response: {response.status_code}")
+
+            if response.status_code in [200, 201]:
+                result = response.json()
+                print(f"  ✅ Published! → {result.get('link')}")
+                return result
+            elif response.status_code == 401:
+                print("  ❌ 401 - Wrong username or password")
+                print(f"  {response.text[:200]}")
+                return None
+            elif response.status_code == 403:
+                print("  ❌ 403 - Permission denied")
+                print(f"  {response.text[:200]}")
+                return None
+            elif response.status_code == 500:
+                print("  ❌ 500 - WordPress server error")
+                print(f"  {response.text[:200]}")
+            else:
+                print(f"  ❌ Failed: {response.status_code}")
+                print(f"  {response.text[:200]}")
+
+        except requests.exceptions.ConnectionError as e:
+            print(f"  ❌ Connection error: {str(e)[:100]}")
+        except requests.exceptions.Timeout:
+            print(f"  ❌ Timeout - server took too long")
+        except Exception as e:
+            print(f"  ❌ Error: {str(e)[:100]}")
+
+    print("  ❌ All 3 attempts failed")
+    return None
 
 # ============================================
 # MAIN
@@ -507,6 +537,7 @@ def main():
         if str(t['id']) not in processed_ids
     ]
 
+    # Limit to 3 per run
     if len(new_tweets) > 3:
         print(f"⚠️  Found {len(new_tweets)} tweets, processing 3 per run")
         new_tweets = new_tweets[:3]
@@ -546,7 +577,8 @@ def main():
             fail_count += 1
 
         if i < len(new_tweets):
-            time.sleep(3)
+            print("\n⏳ Waiting 5 seconds...")
+            time.sleep(5)
 
     print("\n" + "="*50)
     print("📊 SUMMARY")
