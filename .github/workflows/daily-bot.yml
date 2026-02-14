@@ -2,10 +2,7 @@ name: X to WordPress Bot
 
 on:
   schedule:
-    # Runs every day at 9 AM UTC (adjust time as needed)
     - cron: '0 9 * * *'
-  
-  # Allows you to run manually from Actions tab
   workflow_dispatch:
 
 jobs:
@@ -26,7 +23,7 @@ jobs:
       
       - name: Install dependencies
         run: |
-          pip install requests beautifulsoup4 google-genai tweepy
+          pip install requests google-genai tweepy
       
       - name: Run bot
         env:
@@ -36,6 +33,8 @@ jobs:
           WP_SITE_URL: ${{ secrets.WP_SITE_URL }}
           X_USERNAME: ${{ secrets.X_USERNAME }}
           HASHTAG: ${{ secrets.HASHTAG }}
+          X_BEARER_TOKEN: ${{ secrets.X_BEARER_TOKEN }}
+      
         run: python bot.py
       
       - name: Commit processed tweets
