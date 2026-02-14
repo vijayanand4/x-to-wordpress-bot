@@ -5,10 +5,9 @@ from google import genai
 from datetime import datetime
 import time
 import re
-import xml.etree.ElementTree as ET
 
 # ============================================
-# CONFIGURATION - Load from GitHub Secrets
+# CONFIGURATION
 # ============================================
 X_USERNAME = os.getenv('X_USERNAME', '')
 HASHTAG = os.getenv('HASHTAG', '')
@@ -18,19 +17,19 @@ WP_PASSWORD = os.getenv('WP_PASSWORD', '')
 GEMINI_API_KEY = os.getenv('GEMINI_API_KEY', '')
 
 # ============================================
-# STARTUP CHECKS
+# STARTUP
 # ============================================
 print("\n" + "="*50)
 print("🚀 X TO WORDPRESS BOT STARTED")
 print("="*50 + "\n")
 
 print("🔍 Configuration Check:")
-print(f"  X Username:      {'✅' if X_USERNAME else '❌ MISSING'}")
-print(f"  Hashtag:         {'✅' if HASHTAG else '❌ MISSING'}")
-print(f"  WP Site URL:     {'✅' if WP_SITE_URL else '❌ MISSING'}")
-print(f"  WP Username:     {'✅' if WP_USERNAME else '❌ MISSING'}")
-print(f"  WP Password:     {'✅' if WP_PASSWORD else '❌ MISSING'}")
-print(f"  Gemini API Key:  {'✅' if GEMINI_API_KEY else '❌ MISSING'}")
+print(f"  X Username:     {'✅' if X_USERNAME else '❌ MISSING'}")
+print(f"  Hashtag:        {'✅' if HASHTAG else '❌ MISSING'}")
+print(f"  WP Site URL:    {'✅' if WP_SITE_URL else '❌ MISSING'}")
+print(f"  WP Username:    {'✅' if WP_USERNAME else '❌ MISSING'}")
+print(f"  WP Password:    {'✅' if WP_PASSWORD else '❌ MISSING'}")
+print(f"  Gemini API Key: {'✅' if GEMINI_API_KEY else '❌ MISSING'}")
 
 missing = []
 if not X_USERNAME: missing.append('X_USERNAME')
@@ -46,28 +45,26 @@ if missing:
 
 print("\n✅ All secrets loaded!\n")
 
-# ============================================
-# INITIALIZE GEMINI
-# ============================================
+# Initialize Gemini
 try:
     genai_client = genai.Client(api_key=GEMINI_API_KEY)
     print("✅ Gemini AI initialized\n")
 except Exception as e:
-    print(f"❌ Gemini initialization failed: {str(e)}")
+    print(f"❌ Gemini init failed: {str(e)}")
     exit(1)
 
 # ============================================
-# PROCESSED TWEETS TRACKING
+# PROCESSED TWEETS
 # ============================================
 
 def get_processed_tweets():
     try:
         with open('processed_tweets.json', 'r') as f:
             data = json.load(f)
-            print(f"📋 Found {len(data)} previously processed tweets")
+            print(f"📋 {len(data)} previously processed tweets")
             return data
     except FileNotFoundError:
-        print("📋 Starting fresh - no previous tweets")
+        print("📋 Starting fresh")
         return []
 
 def save_processed_tweet(tweet_id):
@@ -78,172 +75,216 @@ def save_processed_tweet(tweet_id):
     })
     with open('processed_tweets.json', 'w') as f:
         json.dump(processed, f, indent=2)
-    print(f"✅ Saved tweet {tweet_id} as processed")
+    print(f"✅ Saved tweet {tweet_id}")
 
 # ============================================
-# RSS FEED PARSING
+# METHOD 1: SYNDICATION RSS
 # ============================================
 
-def fetch_tweets_via_rss():
-    """Fetch tweets using Nitter RSS feed"""
+def fetch_via_syndication():
+    """Use Twitter's own syndication API - no auth needed"""
+    print("\n📡 Method 1: Twitter Syndication API...")
     
-    nitter_instances = [
-        'https://nitter.net',
-        'https://nitter.poast.org',
-        'https://nitter.privacydev.net',
-        'https://nitter.lucabased.xyz',
-        'https://nitter.lunar.icu'
-    ]
-    
-    print(f"📡 Fetching RSS feed for @{X_USERNAME}...")
+    url = f"https://syndication.twitter.com/srv/timeline-profile/screen-name/{X_USERNAME}"
     
     headers = {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120.0.0.0 Safari/537.36',
+        'Accept': 'application/json',
+        'Referer': f'https://twitter.com/{X_USERNAME}'
     }
     
-    for instance in nitter_instances:
-        rss_url = f"{instance}/{X_USERNAME}/rss"
-        print(f"  Trying: {rss_url}")
+    try:
+        response = requests.get(url, headers=headers, timeout=15)
+        print(f"  Status: {response.status_code}")
         
-        try:
-            response = requests.get(
-                rss_url,
-                headers=headers,
-                timeout=15
-            )
+        if response.status_code == 200:
+            data = response.json()
+            tweets = extract_from_syndication(data)
+            if tweets:
+                return tweets
+        else:
+            print(f"  ❌ Failed: {response.text[:100]}")
             
-            print(f"  Status: {response.status_code}")
-            
-            if response.status_code == 200 and '<rss' in response.text:
-                print(f"  ✅ Got RSS feed! ({len(response.text)} chars)")
-                tweets = parse_rss(response.text)
-                if tweets is not None:
-                    return tweets
-            else:
-                print(f"  ❌ Invalid response")
-                
-        except Exception as e:
-            print(f"  ❌ Error: {str(e)[:60]}")
-            continue
+    except Exception as e:
+        print(f"  ❌ Error: {str(e)[:80]}")
     
-    print("❌ Could not fetch RSS from any instance")
-    return []
+    return None
 
-def parse_rss(xml_content):
-    """Parse RSS XML and extract quote tweets with hashtag"""
-    print("\n🔍 Parsing RSS feed...")
+def extract_from_syndication(data):
+    """Extract tweets from syndication response"""
+    try:
+        timeline = data.get('timeline', {})
+        entries = timeline.get('entries', [])
+        
+        print(f"  Found {len(entries)} entries")
+        
+        quote_tweets = []
+        
+        for entry in entries:
+            tweet = entry.get('tweet', {})
+            text = tweet.get('full_text', tweet.get('text', ''))
+            
+            if not text:
+                continue
+            
+            # Check hashtag
+            if HASHTAG.lower() not in text.lower():
+                continue
+            
+            # Check if quote tweet
+            quoted = tweet.get('quoted_status', {})
+            is_quote = bool(quoted)
+            
+            if not is_quote:
+                continue
+            
+            tweet_id = tweet.get('id_str', '')
+            quoted_text = quoted.get('full_text', quoted.get('text', ''))
+            
+            quote_tweets.append({
+                'id': tweet_id,
+                'text': text,
+                'quoted_text': quoted_text,
+                'url': f"https://x.com/{X_USERNAME}/status/{tweet_id}"
+            })
+            
+            print(f"  ✅ Found quote tweet: {tweet_id}")
+        
+        return quote_tweets if quote_tweets else None
+        
+    except Exception as e:
+        print(f"  ❌ Parse error: {str(e)}")
+        return None
+
+# ============================================
+# METHOD 2: TWSTALKER / THIRD PARTY
+# ============================================
+
+def fetch_via_twstalker():
+    """Try tweetscraper alternative"""
+    print("\n📡 Method 2: Alternative scraper...")
+    
+    url = f"https://api.allorigins.win/get?url={requests.utils.quote(f'https://nitter.net/{X_USERNAME}/rss')}"
+    
+    headers = {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'
+    }
+    
+    try:
+        response = requests.get(url, headers=headers, timeout=20)
+        print(f"  Status: {response.status_code}")
+        
+        if response.status_code == 200:
+            data = response.json()
+            content = data.get('contents', '')
+            
+            if '<rss' in content or '<item>' in content:
+                print(f"  ✅ Got RSS content!")
+                return parse_rss_content(content)
+            else:
+                print(f"  ❌ No RSS content found")
+                print(f"  Preview: {content[:100]}")
+                
+    except Exception as e:
+        print(f"  ❌ Error: {str(e)[:80]}")
+    
+    return None
+
+def parse_rss_content(xml_content):
+    """Parse RSS XML content"""
+    import xml.etree.ElementTree as ET
     
     try:
         root = ET.fromstring(xml_content)
-        
-        # Handle XML namespaces
-        namespace = ''
-        if 'http' in xml_content[:200]:
-            try:
-                ns_match = re.search(r'xmlns="([^"]+)"', xml_content[:500])
-                if ns_match:
-                    namespace = f"{{{ns_match.group(1)}}}"
-            except:
-                pass
-        
-        # Find all items
         items = root.findall('.//item')
-        print(f"  Found {len(items)} total items in RSS")
         
-        if len(items) == 0:
-            print("  ⚠️  No items found in RSS feed")
-            return []
+        print(f"  Found {len(items)} RSS items")
         
         quote_tweets = []
         
         for item in items:
-            try:
-                # Get title (tweet text)
-                title_elem = item.find('title')
-                title = title_elem.text if title_elem is not None else ''
-                
-                # Get description (full tweet HTML)
-                desc_elem = item.find('description')
-                description = desc_elem.text if desc_elem is not None else ''
-                
-                # Get link
-                link_elem = item.find('link')
-                link = link_elem.text if link_elem is not None else ''
-                
-                # Get tweet ID from link
-                tweet_id = link.split('/')[-1].replace('#m', '') if link else ''
-                
-                # Combine title and description for hashtag search
-                full_text = f"{title} {description}"
-                
-                # Check for hashtag
-                if HASHTAG.lower() not in full_text.lower():
-                    continue
-                
-                print(f"\n  📌 Found tweet with {HASHTAG}!")
-                print(f"     Title: {title[:80]}...")
-                
-                # Check if it's a quote tweet
-                # Quote tweets contain a blockquote or "RT" style content
-                is_quote = any([
-                    'class="quote"' in description,
-                    '<blockquote' in description,
-                    'twitter-tweet' in description,
-                    'RT @' in full_text,
-                    'quote' in description.lower()
-                ])
-                
-                print(f"     Is quote tweet: {is_quote}")
-                
-                # Extract quoted text from description HTML
-                quoted_text = ''
-                if description:
-                    # Remove HTML tags to get plain text
-                    clean_desc = re.sub(r'<[^>]+>', ' ', description)
-                    clean_desc = re.sub(r'\s+', ' ', clean_desc).strip()
-                    quoted_text = clean_desc[:500]
-                
-                # Use title as main text (cleaner)
-                tweet_text = title if title else clean_desc[:280]
-                
-                quote_tweets.append({
-                    'id': tweet_id,
-                    'text': tweet_text,
-                    'quoted_text': quoted_text,
-                    'url': link or f"https://x.com/{X_USERNAME}/status/{tweet_id}",
-                    'is_confirmed_quote': is_quote
-                })
-                
-                print(f"     ✅ Added to processing queue!")
-                
-            except Exception as e:
-                print(f"  ⚠️  Error parsing item: {str(e)[:60]}")
+            title_elem = item.find('title')
+            desc_elem = item.find('description')
+            link_elem = item.find('link')
+            
+            title = title_elem.text if title_elem is not None else ''
+            description = desc_elem.text if desc_elem is not None else ''
+            link = link_elem.text if link_elem is not None else ''
+            
+            full_text = f"{title} {description}"
+            
+            if HASHTAG.lower() not in full_text.lower():
                 continue
+            
+            tweet_id = link.split('/')[-1].replace('#m', '') if link else str(int(time.time()))
+            
+            # Clean description HTML
+            clean_desc = re.sub(r'<[^>]+>', ' ', description)
+            clean_desc = re.sub(r'\s+', ' ', clean_desc).strip()
+            
+            # Check for quote indicators
+            is_quote = any([
+                'quote' in description.lower(),
+                '<blockquote' in description,
+                '&gt;' in description
+            ])
+            
+            if not is_quote:
+                print(f"  ⚠️  Has hashtag but may not be quote tweet")
+            
+            quote_tweets.append({
+                'id': tweet_id,
+                'text': title,
+                'quoted_text': clean_desc[:500],
+                'url': link
+            })
+            
+            print(f"  ✅ Found tweet: {tweet_id}")
         
-        print(f"\n🎯 Found {len(quote_tweets)} tweets with {HASHTAG}")
-        return quote_tweets
+        return quote_tweets if quote_tweets else None
         
-    except ET.ParseError as e:
-        print(f"  ❌ XML parse error: {str(e)}")
-        return []
     except Exception as e:
-        print(f"  ❌ Unexpected error: {str(e)}")
-        return []
+        print(f"  ❌ RSS parse error: {str(e)}")
+        return None
+
+# ============================================
+# METHOD 3: MANUAL ENTRY FALLBACK
+# ============================================
+
+def check_manual_tweets():
+    """Check manually added tweets file as fallback"""
+    print("\n📡 Method 3: Checking manual_tweets.json...")
+    
+    try:
+        with open('manual_tweets.json', 'r') as f:
+            data = json.load(f)
+            
+        if not data:
+            print("  ℹ️  No manual tweets found")
+            return None
+            
+        print(f"  ✅ Found {len(data)} manual tweet(s)!")
+        return data
+        
+    except FileNotFoundError:
+        print("  ℹ️  No manual_tweets.json file found")
+        return None
+    except Exception as e:
+        print(f"  ❌ Error: {str(e)}")
+        return None
 
 # ============================================
 # RESEARCH
 # ============================================
 
 def research_topic(text):
-    """Research topic using DuckDuckGo"""
+    """Research using DuckDuckGo"""
     print("\n🔬 Researching topic...")
     
-    # Clean query
     query = re.sub(r'#\w+', '', text)
     query = re.sub(r'http\S+', '', query)
     query = query.strip()[:150]
-    
-    print(f"  Query: {query[:80]}...")
+    print(f"  Query: {query[:80]}")
     
     try:
         response = requests.get(
@@ -279,7 +320,7 @@ def research_topic(text):
         return sources
         
     except Exception as e:
-        print(f"  ❌ Research error: {str(e)}")
+        print(f"  ❌ Error: {str(e)}")
         return []
 
 # ============================================
@@ -293,25 +334,25 @@ def generate_article(tweet, sources):
     sources_text = "\n".join([
         f"- {s['title']}: {s['snippet']} (URL: {s['url']})"
         for s in sources
-    ]) if sources else "Use your general knowledge about this topic."
+    ]) if sources else "Use your general knowledge."
     
-    prompt = f"""You are a professional blogger. Write a 300-word informative article.
+    prompt = f"""You are a professional blogger. Write a 300-word article.
 
 TWEET: {tweet['text']}
-CONTEXT: {tweet.get('quoted_text', 'N/A')[:300]}
+QUOTED CONTENT: {tweet.get('quoted_text', 'N/A')[:300]}
 SOURCES: {sources_text}
 
-Write in this EXACT format:
+Use this EXACT format:
 
-Title: [Engaging title here]
+Title: [Engaging title]
 
-[Opening paragraph - hook the reader and introduce topic]
+[Opening paragraph]
 
-[Main paragraph - key facts and information]
+[Main information paragraph]
 
-[Supporting paragraph - additional context and details]
+[Supporting details paragraph]
 
-[Closing paragraph - conclusion and why it matters]
+[Conclusion paragraph]
 
 References:
 1. [Source Name](URL)
@@ -328,21 +369,20 @@ Original Tweet: {tweet['url']}
         print("  ✅ Article generated!")
         return response.text
     except Exception as e:
-        print(f"  ❌ Generation error: {str(e)}")
+        print(f"  ❌ Error: {str(e)}")
         return None
 
 # ============================================
-# WORDPRESS PUBLISHING
+# WORDPRESS
 # ============================================
 
 def publish_to_wordpress(article, tweet):
-    """Publish to WordPress via REST API"""
+    """Publish to WordPress"""
     print("\n📤 Publishing to WordPress...")
     
     if not article:
         return None
     
-    # Extract title
     lines = article.split('\n')
     title_line = next(
         (l for l in lines if l.strip().startswith('Title:')),
@@ -354,17 +394,15 @@ def publish_to_wordpress(article, tweet):
         idx = lines.index(title_line) + 1
         content = '\n'.join(lines[idx:]).strip()
     else:
-        title = f"Article: {tweet['text'][:60]}..."
+        title = f"Article: {tweet['text'][:60]}"
         content = article
     
-    # Convert markdown links to HTML
+    # Markdown links → HTML
     content = re.sub(
         r'\[([^\]]+)\]\(([^\)]+)\)',
         r'<a href="\2">\1</a>',
         content
     )
-    
-    # Convert line breaks to HTML
     content = content.replace('\n\n', '</p><p>')
     content = content.replace('\n', '<br>')
     content = f"<p>{content}</p>"
@@ -378,17 +416,17 @@ def publish_to_wordpress(article, tweet):
                 'title': title,
                 'content': content,
                 'status': 'publish',
-                'excerpt': f"Auto-generated from: {tweet['url']}"
+                'excerpt': f"From: {tweet['url']}"
             },
             auth=(WP_USERNAME, WP_PASSWORD),
             timeout=30
         )
         
-        print(f"  WordPress Status: {response.status_code}")
+        print(f"  Status: {response.status_code}")
         
         if response.status_code in [200, 201]:
             result = response.json()
-            print(f"  ✅ Published! → {result.get('link')}")
+            print(f"  ✅ Published → {result.get('link')}")
             return result
         else:
             print(f"  ❌ Failed: {response.text[:300]}")
@@ -403,14 +441,42 @@ def publish_to_wordpress(article, tweet):
 # ============================================
 
 def main():
-    # Step 1: Fetch tweets via RSS
-    tweets = fetch_tweets_via_rss()
+    # Try all methods to get tweets
+    tweets = None
+    
+    tweets = fetch_via_syndication()
+    if not tweets:
+        tweets = fetch_via_twstalker()
+    if not tweets:
+        tweets = check_manual_tweets()
     
     if not tweets:
-        print("\n⚠️  No tweets found with hashtag. Exiting.\n")
+        print("\n" + "="*50)
+        print("⚠️  COULD NOT FETCH TWEETS AUTOMATICALLY")
+        print("="*50)
+        print("""
+All automatic methods failed. Here's what you can do:
+
+MANUAL METHOD:
+1. Find your quote tweet on X
+2. Copy the tweet URL (looks like: https://x.com/username/status/1234567890)
+3. Create a file called 'manual_tweets.json' in your GitHub repo
+4. Add your tweet details like this:
+
+[
+  {
+    "id": "1234567890",
+    "text": "Your tweet text here #YourHashtag",
+    "quoted_text": "The tweet you quoted text here",
+    "url": "https://x.com/yourusername/status/1234567890"
+  }
+]
+
+5. Run the workflow again - it will process your tweet!
+""")
         return
     
-    # Step 2: Check already processed
+    # Filter already processed
     processed_ids = [
         str(t['id']) if isinstance(t, dict) else str(t)
         for t in get_processed_tweets()
@@ -425,26 +491,24 @@ def main():
         print(f"\n✅ All {len(tweets)} tweets already processed!\n")
         return
     
-    print(f"\n📊 {len(new_tweets)} new tweet(s) to process!\n")
+    print(f"\n📊 Processing {len(new_tweets)} new tweet(s)...\n")
     
-    # Step 3: Process each tweet
     for i, tweet in enumerate(new_tweets, 1):
         print(f"\n{'='*40}")
         print(f"TWEET {i} of {len(new_tweets)}")
         print(f"{'='*40}")
+        print(f"Text: {tweet['text'][:100]}")
         
-        # Research
-        research_text = tweet.get('quoted_text') or tweet['text']
-        sources = research_topic(research_text)
+        sources = research_topic(
+            tweet.get('quoted_text') or tweet['text']
+        )
         time.sleep(2)
         
-        # Generate article
         article = generate_article(tweet, sources)
         if not article:
             print("⚠️  Skipping - generation failed")
             continue
         
-        # Publish
         result = publish_to_wordpress(article, tweet)
         if result:
             save_processed_tweet(str(tweet['id']))
