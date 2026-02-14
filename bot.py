@@ -4,41 +4,65 @@ import os
 from google import genai
 from datetime import datetime
 import time
-import tweepy
+import re
 
-# Configuration from GitHub Secrets
-X_USERNAME = os.getenv('X_USERNAME')
-HASHTAG = os.getenv('HASHTAG')
-WP_SITE_URL = os.getenv('WP_SITE_URL').rstrip('/')
-WP_USERNAME = os.getenv('WP_USERNAME')
-WP_PASSWORD = os.getenv('WP_PASSWORD')
-GEMINI_API_KEY = os.getenv('GEMINI_API_KEY')
+# ============================================
+# CONFIGURATION - Load from GitHub Secrets
+# ============================================
+X_USERNAME = os.getenv('X_USERNAME', '')
+HASHTAG = os.getenv('HASHTAG', '')
+WP_SITE_URL = os.getenv('WP_SITE_URL', '').rstrip('/')
+WP_USERNAME = os.getenv('WP_USERNAME', '')
+WP_PASSWORD = os.getenv('WP_PASSWORD', '')
+GEMINI_API_KEY = os.getenv('GEMINI_API_KEY', '')
+X_BEARER_TOKEN = os.getenv('X_BEARER_TOKEN', '')
 
-# X API credentials
-X_API_KEY = os.getenv('X_API_KEY')
-X_API_SECRET = os.getenv('X_API_SECRET')
-X_ACCESS_TOKEN = os.getenv('X_ACCESS_TOKEN')
-X_ACCESS_TOKEN_SECRET = os.getenv('X_ACCESS_TOKEN_SECRET')
+# ============================================
+# STARTUP CHECKS
+# ============================================
+print("\n" + "="*50)
+print("🚀 X TO WORDPRESS BOT STARTED")
+print("="*50 + "\n")
 
-print(f"🤖 Bot starting for X user: @{X_USERNAME}")
-print(f"🔍 Looking for hashtag: {HASHTAG}")
-print(f"📝 Will post to: {WP_SITE_URL}")
+print("🔍 Configuration Check:")
+print(f"  X Username:      {'✅' if X_USERNAME else '❌ MISSING'}")
+print(f"  Hashtag:         {'✅' if HASHTAG else '❌ MISSING'}")
+print(f"  WP Site URL:     {'✅' if WP_SITE_URL else '❌ MISSING'}")
+print(f"  WP Username:     {'✅' if WP_USERNAME else '❌ MISSING'}")
+print(f"  WP Password:     {'✅' if WP_PASSWORD else '❌ MISSING'}")
+print(f"  Gemini API Key:  {'✅' if GEMINI_API_KEY else '❌ MISSING'}")
+print(f"  Bearer Token:    {'✅ Present (' + str(len(X_BEARER_TOKEN)) + ' chars)' if X_BEARER_TOKEN else '❌ MISSING'}")
 
-print(f"🔑 Bearer Token present: {'✅ YES' if X_BEARER_TOKEN else '❌ NO - EMPTY!'}")
-print(f"🔑 Token length: {len(X_BEARER_TOKEN) if X_BEARER_TOKEN else 0}")
+# Stop if critical secrets are missing
+missing = []
+if not X_USERNAME: missing.append('X_USERNAME')
+if not HASHTAG: missing.append('HASHTAG')
+if not WP_SITE_URL: missing.append('WP_SITE_URL')
+if not WP_USERNAME: missing.append('WP_USERNAME')
+if not WP_PASSWORD: missing.append('WP_PASSWORD')
+if not GEMINI_API_KEY: missing.append('GEMINI_API_KEY')
+if not X_BEARER_TOKEN: missing.append('X_BEARER_TOKEN')
 
-# Initialize Gemini
-# genai.configure(api_key=GEMINI_API_KEY)
-# model = genai.GenerativeModel('gemini-pro')
-genai_client = genai.Client(api_key=GEMINI_API_KEY)
+if missing:
+    print(f"\n❌ MISSING SECRETS: {', '.join(missing)}")
+    print("Please add these to GitHub Secrets and try again.")
+    exit(1)
 
-# Initialize X API (Twitter API v2)
-client = tweepy.Client(
-    consumer_key=X_API_KEY,
-    consumer_secret=X_API_SECRET,
-    access_token=X_ACCESS_TOKEN,
-    access_token_secret=X_ACCESS_TOKEN_SECRET
-)
+print("\n✅ All secrets loaded successfully!\n")
+
+# ============================================
+# INITIALIZE GEMINI
+# ============================================
+try:
+    genai_client = genai.Client(api_key=GEMINI_API_KEY)
+    print("✅ Gemini AI initialized")
+except Exception as e:
+    print(f"❌ Gemini initialization failed: {str(e)}")
+    exit(1)
+
+# ============================================
+# HELPER FUNCTIONS
+# ============================================
 
 def get_processed_tweets():
     """Load already processed tweet IDs"""
@@ -55,118 +79,185 @@ def save_processed_tweet(tweet_id):
     """Save processed tweet ID"""
     processed = get_processed_tweets()
     processed.append({
-        'id': tweet_id,
+        'id': str(tweet_id),
         'processed_at': datetime.now().isoformat()
     })
     with open('processed_tweets.json', 'w') as f:
         json.dump(processed, f, indent=2)
     print(f"✅ Saved tweet {tweet_id} as processed")
 
-def get_user_id():
-    """Get user ID from username"""
-    try:
-        user = client.get_user(username=X_USERNAME)
-        if user.data:
-            print(f"  ✅ Found user ID: {user.data.id}")
-            return user.data.id
-        else:
-            print("  ❌ User not found")
-            return None
-    except Exception as e:
-        print(f"  ❌ Error getting user ID: {str(e)}")
-        return None
+def get_headers():
+    """Get X API authorization headers"""
+    return {
+        'Authorization': f'Bearer {X_BEARER_TOKEN}',
+        'Content-Type': 'application/json'
+    }
 
-def fetch_user_tweets():
-    """Fetch recent tweets using X API v2"""
-    print(f"🔎 Fetching tweets from @{X_USERNAME} using X API...")
+# ============================================
+# X API FUNCTIONS
+# ============================================
+
+def get_user_id():
+    """Get X user ID from username"""
+    print(f"\n🔎 Looking up @{X_USERNAME} on X...")
+    
+    url = f"https://api.twitter.com/2/users/by/username/{X_USERNAME}"
     
     try:
-        user_id = get_user_id()
-        if not user_id:
-            return []
-        
-        # Fetch user's tweets (last 100)
-        response = client.get_users_tweets(
-            id=user_id,
-            max_results=100,
-            tweet_fields=['created_at', 'text', 'referenced_tweets'],
-            expansions=['referenced_tweets.id']
+        response = requests.get(
+            url,
+            headers=get_headers(),
+            timeout=15
         )
         
-        if not response.data:
-            print("  ⚠️  No tweets found")
-            return []
+        print(f"  API Response Status: {response.status_code}")
         
-        print(f"  ✅ Found {len(response.data)} total tweets")
-        
-        # Filter for quote tweets with hashtag
-        quote_tweets = []
-        
-        for tweet in response.data:
-            # Check if it's a quote tweet
-            is_quote = False
-            quoted_tweet_id = None
+        if response.status_code == 200:
+            data = response.json()
+            user_id = data['data']['id']
+            print(f"  ✅ Found user ID: {user_id}")
+            return user_id
             
-            if tweet.referenced_tweets:
-                for ref in tweet.referenced_tweets:
-                    if ref.type == 'quoted':
-                        is_quote = True
-                        quoted_tweet_id = ref.id
-                        break
+        elif response.status_code == 401:
+            print(f"  ❌ 401 Unauthorized")
+            print(f"  Full response: {response.text}")
+            print(f"  → Your Bearer Token is invalid or expired")
+            print(f"  → Please regenerate it at developer.twitter.com")
+            return None
             
-            # Check if it has the hashtag
-            has_hashtag = HASHTAG.lower() in tweet.text.lower()
+        elif response.status_code == 403:
+            print(f"  ❌ 403 Forbidden")
+            print(f"  Full response: {response.text}")
+            print(f"  → Your app may not have permission to read user data")
+            return None
             
-            if is_quote and has_hashtag:
-                # Get the quoted tweet text
-                quoted_text = ""
-                if response.includes and 'tweets' in response.includes:
-                    for included_tweet in response.includes['tweets']:
-                        if included_tweet.id == quoted_tweet_id:
-                            quoted_text = included_tweet.text
-                            break
-                
-                quote_tweets.append({
-                    'id': tweet.id,
-                    'text': tweet.text,
-                    'quoted_text': quoted_text,
-                    'url': f"https://x.com/{X_USERNAME}/status/{tweet.id}"
-                })
-                
-                print(f"  ✅ Found quote tweet: {tweet.id}")
-        
-        print(f"🎯 Found {len(quote_tweets)} quote tweets with hashtag {HASHTAG}")
-        return quote_tweets
-        
+        elif response.status_code == 429:
+            print(f"  ❌ 429 Rate Limited - Too many requests")
+            return None
+            
+        else:
+            print(f"  ❌ Unexpected status: {response.status_code}")
+            print(f"  Full response: {response.text}")
+            return None
+            
     except Exception as e:
-        print(f"  ❌ Error fetching tweets: {str(e)}")
-        import traceback
-        traceback.print_exc()
-        return []
+        print(f"  ❌ Request failed: {str(e)}")
+        return None
 
-def research_topic(tweet_text):
-    """Research using DuckDuckGo"""
-    print("🔬 Researching topic...")
+def fetch_user_tweets(user_id):
+    """Fetch recent tweets from user"""
+    print(f"\n📥 Fetching tweets for user {user_id}...")
     
-    # Clean the search query
-    search_query = tweet_text.replace(HASHTAG, '').strip()[:150]
+    url = f"https://api.twitter.com/2/users/{user_id}/tweets"
+    params = {
+        'max_results': 100,
+        'tweet.fields': 'created_at,text,referenced_tweets',
+        'expansions': 'referenced_tweets.id'
+    }
     
     try:
-        # DuckDuckGo Instant Answer API
-        ddg_url = "https://api.duckduckgo.com/"
-        params = {
-            'q': search_query,
-            'format': 'json',
-            'no_html': 1,
-            'skip_disambig': 1
-        }
+        response = requests.get(
+            url,
+            headers=get_headers(),
+            params=params,
+            timeout=15
+        )
         
-        response = requests.get(ddg_url, params=params, timeout=10)
+        print(f"  API Response Status: {response.status_code}")
+        
+        if response.status_code == 200:
+            data = response.json()
+            count = len(data.get('data', []))
+            print(f"  ✅ Fetched {count} tweets")
+            return data
+        else:
+            print(f"  ❌ Error: {response.text[:300]}")
+            return None
+            
+    except Exception as e:
+        print(f"  ❌ Request failed: {str(e)}")
+        return None
+
+def process_tweets(tweets_data):
+    """Filter for quote tweets containing hashtag"""
+    print(f"\n🔍 Scanning tweets for hashtag {HASHTAG}...")
+    
+    if not tweets_data or 'data' not in tweets_data:
+        print("  ⚠️  No tweet data to process")
+        return []
+    
+    tweets = tweets_data['data']
+    includes = tweets_data.get('includes', {})
+    included_tweets = {
+        t['id']: t for t in includes.get('tweets', [])
+    }
+    
+    print(f"  Total tweets to scan: {len(tweets)}")
+    
+    quote_tweets = []
+    
+    for tweet in tweets:
+        text = tweet.get('text', '')
+        
+        # Check for hashtag
+        if HASHTAG.lower() not in text.lower():
+            continue
+        
+        print(f"  📌 Found tweet with hashtag: {text[:60]}...")
+        
+        # Check if it's a quote tweet
+        refs = tweet.get('referenced_tweets', [])
+        quoted_ref = next(
+            (r for r in refs if r['type'] == 'quoted'),
+            None
+        )
+        
+        if not quoted_ref:
+            print(f"     ⚠️  Has hashtag but is not a quote tweet, skipping")
+            continue
+        
+        # Get the quoted tweet's text
+        quoted_tweet = included_tweets.get(quoted_ref['id'], {})
+        quoted_text = quoted_tweet.get('text', '')
+        
+        quote_tweets.append({
+            'id': tweet['id'],
+            'text': text,
+            'quoted_text': quoted_text,
+            'url': f"https://x.com/{X_USERNAME}/status/{tweet['id']}"
+        })
+        
+        print(f"     ✅ Valid quote tweet found!")
+    
+    print(f"\n🎯 Total valid quote tweets: {len(quote_tweets)}")
+    return quote_tweets
+
+# ============================================
+# RESEARCH FUNCTION
+# ============================================
+
+def research_topic(tweet_text):
+    """Research topic using DuckDuckGo"""
+    print("\n🔬 Researching topic...")
+    
+    search_query = tweet_text.replace(HASHTAG, '').strip()[:150]
+    print(f"  Search query: {search_query[:80]}...")
+    
+    try:
+        response = requests.get(
+            "https://api.duckduckgo.com/",
+            params={
+                'q': search_query,
+                'format': 'json',
+                'no_html': 1,
+                'skip_disambig': 1
+            },
+            timeout=10
+        )
+        
         data = response.json()
-        
         sources = []
         
-        # Get main abstract
         if data.get('AbstractURL'):
             sources.append({
                 'title': data.get('AbstractSource', 'Source'),
@@ -174,11 +265,10 @@ def research_topic(tweet_text):
                 'snippet': data.get('AbstractText', '')[:300]
             })
         
-        # Get related topics
         for topic in data.get('RelatedTopics', [])[:4]:
             if isinstance(topic, dict) and topic.get('FirstURL'):
                 sources.append({
-                    'title': topic.get('Text', 'Related Topic').split(' - ')[0][:100],
+                    'title': topic.get('Text', '')[:100],
                     'url': topic.get('FirstURL'),
                     'snippet': topic.get('Text', '')[:300]
                 })
@@ -187,178 +277,191 @@ def research_topic(tweet_text):
         return sources
         
     except Exception as e:
-        print(f"  ❌ Research error: {str(e)}")
+        print(f"  ❌ Research failed: {str(e)}")
         return []
 
+# ============================================
+# ARTICLE GENERATION
+# ============================================
+
 def generate_article(tweet, sources):
-    """Generate article using Gemini"""
-    print("✍️  Generating article with AI...")
+    """Generate 300-word article using Gemini"""
+    print("\n✍️  Generating article with Gemini AI...")
     
-    if not sources:
-        sources_text = "No external sources found. Write based on the quoted tweet content."
-    else:
-        sources_text = "\n".join([
-            f"- {s['title']}: {s['snippet']} (URL: {s['url']})"
-            for s in sources
-        ])
+    sources_text = "\n".join([
+        f"- {s['title']}: {s['snippet']} (URL: {s['url']})"
+        for s in sources
+    ]) if sources else "No sources available. Use general knowledge."
     
-    prompt = f"""You are a professional blogger. Write an informative article based on this information:
+    prompt = f"""You are a professional blogger. Write a 300-word article.
 
-ORIGINAL TWEET: {tweet['text']}
+TWEET: {tweet['text']}
+QUOTED TWEET: {tweet.get('quoted_text', 'N/A')}
+SOURCES: {sources_text}
 
-QUOTED TWEET (main topic): {tweet.get('quoted_text', '')}
+STRICT FORMAT - follow exactly:
+Title: [Your engaging title here]
 
-RESEARCH SOURCES:
-{sources_text}
+[Opening paragraph - introduce the topic]
 
-REQUIREMENTS:
-- Write exactly 300 words
-- Create an engaging title
-- Write in clear paragraphs (no bullet points in main text)
-- Be informative and educational
-- Include all source URLs as clickable references at the end
-- Make it readable and engaging
+[Main paragraph - key information and context]
 
-FORMAT:
-Title: [Engaging Title Here]
+[Supporting paragraph - additional details]
 
-[First paragraph introducing the topic]
-
-[Second paragraph with main information]
-
-[Third paragraph with additional context]
-
-[Concluding paragraph]
+[Closing paragraph - conclusion and takeaway]
 
 References:
-1. [Source name](URL)
-2. [Source name](URL)
+1. [Source Name](URL)
+2. [Source Name](URL)
 
-Original tweet: {tweet['url']}
+Original Source: {tweet['url']}
 """
     
     try:
         response = genai_client.models.generate_content(
-        model='gemini-2.0-flash',
-        contents=prompt
+            model='gemini-2.0-flash',
+            contents=prompt
         )
-        article = response.text
-        print("  ✅ Article generated successfully")
-        return article
+        print("  ✅ Article generated!")
+        return response.text
     except Exception as e:
-        print(f"  ❌ Generation error: {str(e)}")
+        print(f"  ❌ Generation failed: {str(e)}")
         return None
 
+# ============================================
+# WORDPRESS PUBLISHING
+# ============================================
+
 def publish_to_wordpress(article, tweet):
-    """Publish to WordPress"""
-    print("📤 Publishing to WordPress...")
+    """Publish article to WordPress"""
+    print("\n📤 Publishing to WordPress...")
     
     if not article:
-        print("  ❌ No article to publish")
+        print("  ❌ No article content")
         return None
     
-    # Parse title and content
+    # Extract title
     lines = article.split('\n')
-    title_line = [l for l in lines if l.strip().startswith('Title:')]
+    title_line = next(
+        (l for l in lines if l.strip().startswith('Title:')),
+        None
+    )
     
     if title_line:
-        title = title_line[0].replace('Title:', '').strip()
-        content_start = lines.index(title_line[0]) + 1
-        content = '\n'.join(lines[content_start:]).strip()
+        title = title_line.replace('Title:', '').strip()
+        idx = lines.index(title_line) + 1
+        content = '\n'.join(lines[idx:]).strip()
     else:
-        title = "Article from X"
+        title = f"Article: {tweet['text'][:50]}..."
         content = article
     
-    # Convert markdown links to HTML
-    import re
-    content = re.sub(r'\[([^\]]+)\]\(([^\)]+)\)', r'<a href="\2">\1</a>', content)
+    # Convert markdown to HTML
+    content = re.sub(
+        r'\[([^\]]+)\]\(([^\)]+)\)',
+        r'<a href="\2">\1</a>',
+        content
+    )
+    content = content.replace('\n\n', '</p><p>')
+    content = content.replace('\n', '<br>')
+    content = f"<p>{content}</p>"
     
-    # WordPress API endpoint
-    wp_api_url = f"{WP_SITE_URL}/wp-json/wp/v2/posts"
-    
-    post_data = {
-        'title': title,
-        'content': content,
-        'status': 'publish',
-        'excerpt': f"Generated from X quote tweet: {tweet['url']}"
-    }
+    print(f"  Title: {title}")
+    print(f"  Posting to: {WP_SITE_URL}/wp-json/wp/v2/posts")
     
     try:
         response = requests.post(
-            wp_api_url,
-            json=post_data,
+            f"{WP_SITE_URL}/wp-json/wp/v2/posts",
+            json={
+                'title': title,
+                'content': content,
+                'status': 'publish',
+                'excerpt': f"Auto-generated from: {tweet['url']}"
+            },
             auth=(WP_USERNAME, WP_PASSWORD),
             timeout=30
         )
         
+        print(f"  WordPress Response: {response.status_code}")
+        
         if response.status_code in [200, 201]:
             result = response.json()
-            print(f"  ✅ Published successfully!")
-            print(f"  📝 Post URL: {result.get('link')}")
+            print(f"  ✅ Published! URL: {result.get('link')}")
             return result
         else:
-            print(f"  ❌ Publish failed: {response.status_code}")
-            print(f"  Response: {response.text[:200]}")
+            print(f"  ❌ Failed: {response.text[:300]}")
             return None
             
     except Exception as e:
         print(f"  ❌ Publish error: {str(e)}")
         return None
 
+# ============================================
+# MAIN
+# ============================================
+
 def main():
-    print("\n" + "="*50)
-    print("🚀 X TO WORDPRESS BOT STARTED")
-    print("="*50 + "\n")
+    # Step 1: Get user ID
+    user_id = get_user_id()
+    if not user_id:
+        print("\n❌ Cannot continue without user ID\n")
+        exit(1)
     
-    # Get tweets using X API
-    tweets = fetch_user_tweets()
+    # Step 2: Fetch tweets
+    tweets_data = fetch_user_tweets(user_id)
+    if not tweets_data:
+        print("\n❌ Cannot continue without tweets\n")
+        exit(1)
     
+    # Step 3: Filter quote tweets
+    tweets = process_tweets(tweets_data)
     if not tweets:
-        print("\n❌ No quote tweets found with hashtag. Exiting.\n")
+        print("\n⚠️  No new quote tweets with hashtag found\n")
         return
     
-    processed_ids = [str(t['id']) if isinstance(t, dict) else str(t) for t in get_processed_tweets()]
-    
-    new_tweets = [t for t in tweets if str(t['id']) not in processed_ids]
+    # Step 4: Skip already processed
+    processed_ids = [
+        str(t['id']) if isinstance(t, dict) else str(t)
+        for t in get_processed_tweets()
+    ]
+    new_tweets = [
+        t for t in tweets
+        if str(t['id']) not in processed_ids
+    ]
     
     if not new_tweets:
-        print(f"\n✅ All {len(tweets)} tweets already processed. Nothing to do!\n")
+        print(f"\n✅ All {len(tweets)} tweets already processed!\n")
         return
     
-    print(f"\n📊 Processing {len(new_tweets)} new tweets...\n")
+    print(f"\n📊 {len(new_tweets)} new tweet(s) to process\n")
     
+    # Step 5: Process each tweet
     for i, tweet in enumerate(new_tweets, 1):
-        print(f"\n--- TWEET {i}/{len(new_tweets)} ---")
-        print(f"ID: {tweet['id']}")
+        print(f"\n{'='*40}")
+        print(f"PROCESSING TWEET {i} of {len(new_tweets)}")
+        print(f"{'='*40}")
         print(f"Text: {tweet['text'][:100]}...")
         
-        # Research
-        sources = research_topic(tweet.get('quoted_text', tweet['text']))
-        
-        # Wait a bit to avoid rate limits
+        sources = research_topic(
+            tweet.get('quoted_text', tweet['text'])
+        )
         time.sleep(2)
         
-        # Generate
         article = generate_article(tweet, sources)
-        
         if not article:
-            print("⚠️  Skipping this tweet due to generation error")
+            print("⚠️  Skipping - article generation failed")
             continue
         
-        # Publish
         result = publish_to_wordpress(article, tweet)
-        
         if result:
             save_processed_tweet(str(tweet['id']))
-            print("✅ Complete!")
+            print("\n✅ Tweet fully processed!")
         else:
-            print("❌ Failed to publish")
+            print("\n❌ Failed to publish")
         
-        # Be nice to APIs
         time.sleep(3)
     
     print("\n" + "="*50)
-    print("🎉 BOT FINISHED SUCCESSFULLY")
+    print("🎉 BOT RUN COMPLETE!")
     print("="*50 + "\n")
 
 if __name__ == "__main__":
