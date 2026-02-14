@@ -8,23 +8,20 @@ on:
 jobs:
   run-bot:
     runs-on: ubuntu-latest
-    
     permissions:
       contents: write
-    
     steps:
       - name: Checkout code
         uses: actions/checkout@v3
-      
+
       - name: Set up Python
         uses: actions/setup-python@v4
         with:
           python-version: '3.11'
-      
+
       - name: Install dependencies
-        run: |
-          pip install requests groq
-      
+        run: pip install requests groq
+
       - name: Run bot
         env:
           GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
@@ -34,8 +31,11 @@ jobs:
           X_USERNAME: ${{ secrets.X_USERNAME }}
           HASHTAG: ${{ secrets.HASHTAG }}
         run: python bot.py
-      
-      - name: Commit processed tweets
+
+      - name: Save processed tweets
         run: |
-          git config --local user.email "github-actions[bot]@users.noreply.github.com"
-          git config --local user
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git config user.name "github-actions[bot]"
+          git add processed_tweets.json || true
+          git diff --staged --quiet || git commit -m "Update processed tweets [skip ci]"
+          git push || true
