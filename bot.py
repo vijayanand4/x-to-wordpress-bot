@@ -1,12 +1,12 @@
 import requests
 import json
 import os
-from google import genai
 from datetime import datetime
 import time
 import re
 import base64
 import xml.etree.ElementTree as ET
+from openai import OpenAI
 
 # ============================================
 # CONFIGURATION
@@ -16,7 +16,7 @@ HASHTAG = os.getenv('HASHTAG', '')
 WP_SITE_URL = os.getenv('WP_SITE_URL', '').rstrip('/')
 WP_USERNAME = os.getenv('WP_USERNAME', '')
 WP_PASSWORD = os.getenv('WP_PASSWORD', '')
-GEMINI_API_KEY = os.getenv('GEMINI_API_KEY', '')
+OPENAI_API_KEY = os.getenv('OPENAI_API_KEY', '')
 
 # ============================================
 # STARTUP
@@ -26,12 +26,12 @@ print("🚀 X TO WORDPRESS BOT STARTED")
 print("="*50 + "\n")
 
 print("🔍 Configuration Check:")
-print(f"  X Username:     {'✅' if X_USERNAME else '❌ MISSING'}")
-print(f"  Hashtag:        {'✅' if HASHTAG else '❌ MISSING'}")
-print(f"  WP Site URL:    {'✅' if WP_SITE_URL else '❌ MISSING'}")
-print(f"  WP Username:    {'✅' if WP_USERNAME else '❌ MISSING'}")
-print(f"  WP Password:    {'✅' if WP_PASSWORD else '❌ MISSING'}")
-print(f"  Gemini API Key: {'✅' if GEMINI_API_KEY else '❌ MISSING'}")
+print(f"  X Username:      {'✅' if X_USERNAME else '❌ MISSING'}")
+print(f"  Hashtag:         {'✅' if HASHTAG else '❌ MISSING'}")
+print(f"  WP Site URL:     {'✅' if WP_SITE_URL else '❌ MISSING'}")
+print(f"  WP Username:     {'✅' if WP_USERNAME else '❌ MISSING'}")
+print(f"  WP Password:     {'✅' if WP_PASSWORD else '❌ MISSING'}")
+print(f"  OpenAI API Key:  {'✅' if OPENAI_API_KEY else '❌ MISSING'}")
 
 missing = []
 if not X_USERNAME: missing.append('X_USERNAME')
@@ -39,7 +39,7 @@ if not HASHTAG: missing.append('HASHTAG')
 if not WP_SITE_URL: missing.append('WP_SITE_URL')
 if not WP_USERNAME: missing.append('WP_USERNAME')
 if not WP_PASSWORD: missing.append('WP_PASSWORD')
-if not GEMINI_API_KEY: missing.append('GEMINI_API_KEY')
+if not OPENAI_API_KEY: missing.append('OPENAI_API_KEY')
 
 if missing:
     print(f"\n❌ MISSING SECRETS: {', '.join(missing)}")
@@ -47,12 +47,12 @@ if missing:
 
 print("\n✅ All secrets loaded!\n")
 
-# Initialize Gemini
+# Initialize OpenAI
 try:
-    genai_client = genai.Client(api_key=GEMINI_API_KEY)
-    print("✅ Gemini AI initialized\n")
+    client = OpenAI(api_key=OPENAI_API_KEY)
+    print("✅ OpenAI initialized\n")
 except Exception as e:
-    print(f"❌ Gemini init failed: {str(e)}")
+    print(f"❌ OpenAI init failed: {str(e)}")
     exit(1)
 
 # ============================================
@@ -88,7 +88,6 @@ def fetch_via_syndication():
     print("\n📡 Method 1: Twitter Syndication API...")
 
     url = f"https://syndication.twitter.com/srv/timeline-profile/screen-name/{X_USERNAME}"
-
     headers = {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120.0.0.0 Safari/537.36',
         'Accept': 'application/json',
@@ -98,7 +97,6 @@ def fetch_via_syndication():
     try:
         response = requests.get(url, headers=headers, timeout=15)
         print(f"  Status: {response.status_code}")
-        print(f"  Response preview: {response.text[:150]}")
 
         if response.status_code == 200 and response.text.strip():
             try:
@@ -107,7 +105,7 @@ def fetch_via_syndication():
                 if tweets:
                     return tweets
                 else:
-                    print("  ⚠️  No matching tweets found in syndication data")
+                    print("  ⚠️  No matching tweets found")
             except json.JSONDecodeError as e:
                 print(f"  ❌ JSON parse error: {str(e)}")
         else:
@@ -123,26 +121,20 @@ def extract_from_syndication(data):
     try:
         timeline = data.get('timeline', {})
         entries = timeline.get('entries', [])
-        print(f"  Found {len(entries)} entries in timeline")
+        print(f"  Found {len(entries)} entries")
 
         quote_tweets = []
-
         for entry in entries:
             tweet = entry.get('tweet', {})
             text = tweet.get('full_text', tweet.get('text', ''))
 
-            if not text:
-                continue
-
-            if HASHTAG.lower() not in text.lower():
+            if not text or HASHTAG.lower() not in text.lower():
                 continue
 
             print(f"  📌 Found tweet with hashtag: {text[:60]}...")
 
             quoted = tweet.get('quoted_status', {})
-            is_quote = bool(quoted)
-
-            if not is_quote:
+            if not quoted:
                 print(f"     ⚠️  Not a quote tweet, skipping")
                 continue
 
@@ -155,7 +147,6 @@ def extract_from_syndication(data):
                 'quoted_text': quoted_text,
                 'url': f"https://x.com/{X_USERNAME}/status/{tweet_id}"
             })
-
             print(f"     ✅ Valid quote tweet: {tweet_id}")
 
         return quote_tweets if quote_tweets else None
@@ -165,22 +156,18 @@ def extract_from_syndication(data):
         return None
 
 # ============================================
-# METHOD 2: ALLORIGINS PROXY + BASE64 DECODE
+# METHOD 2: ALLORIGINS RSS PROXY
 # ============================================
 
-def fetch_via_twstalker():
+def fetch_via_rss_proxy():
     """Try allorigins proxy with base64 decode support"""
-    print("\n📡 Method 2: AllOrigins RSS Proxy...")
+    print("\n📡 Method 2: RSS Proxy...")
 
     nitter_url = f'https://nitter.net/{X_USERNAME}/rss'
     proxy_url = f"https://api.allorigins.win/get?url={requests.utils.quote(nitter_url)}"
 
-    headers = {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'
-    }
-
     try:
-        response = requests.get(proxy_url, headers=headers, timeout=20)
+        response = requests.get(proxy_url, timeout=20)
         print(f"  Status: {response.status_code}")
 
         if response.status_code == 200:
@@ -188,27 +175,25 @@ def fetch_via_twstalker():
             content = data.get('contents', '')
 
             if not content:
-                print("  ❌ Empty content received")
+                print("  ❌ Empty content")
                 return None
 
-            # Handle base64 encoded response
+            # Decode base64 if needed
             if content.startswith('data:'):
-                print("  📦 Base64 encoded content detected, decoding...")
+                print("  📦 Decoding base64...")
                 try:
                     base64_data = content.split(',', 1)[1]
                     content = base64.b64decode(base64_data).decode('utf-8')
-                    print(f"  ✅ Decoded successfully! ({len(content)} chars)")
+                    print(f"  ✅ Decoded! ({len(content)} chars)")
                 except Exception as e:
                     print(f"  ❌ Decode error: {str(e)}")
                     return None
 
-            print(f"  Content preview: {content[:100]}")
-
             if '<rss' in content or '<item>' in content:
-                print("  ✅ Valid RSS content found!")
+                print("  ✅ Valid RSS found!")
                 return parse_rss_content(content)
             else:
-                print("  ❌ No RSS content found after decode")
+                print(f"  ❌ No RSS content")
 
     except Exception as e:
         print(f"  ❌ Error: {str(e)[:80]}")
@@ -216,20 +201,18 @@ def fetch_via_twstalker():
     return None
 
 def parse_rss_content(xml_content):
-    """Parse RSS XML and find quote tweets with hashtag"""
-    print("\n  🔍 Parsing RSS content...")
+    """Parse RSS XML and find tweets with hashtag"""
+    print("\n  🔍 Parsing RSS...")
 
     try:
         root = ET.fromstring(xml_content)
         items = root.findall('.//item')
         print(f"  Found {len(items)} items in RSS")
 
-        if len(items) == 0:
-            print("  ⚠️  No items in RSS feed")
+        if not items:
             return None
 
         quote_tweets = []
-
         for item in items:
             title_elem = item.find('title')
             desc_elem = item.find('description')
@@ -241,28 +224,15 @@ def parse_rss_content(xml_content):
 
             full_text = f"{title} {description}"
 
-            # Check hashtag
             if HASHTAG.lower() not in full_text.lower():
                 continue
 
-            print(f"  📌 Found tweet with hashtag: {title[:60]}...")
+            print(f"  📌 Found: {title[:60]}...")
 
-            # Get tweet ID
             tweet_id = link.split('/')[-1].replace('#m', '') if link else str(int(time.time()))
 
-            # Clean HTML from description
             clean_desc = re.sub(r'<[^>]+>', ' ', description)
             clean_desc = re.sub(r'\s+', ' ', clean_desc).strip()
-
-            # Check if quote tweet
-            is_quote = any([
-                'class="quote"' in description,
-                '<blockquote' in description,
-                'RT @' in full_text,
-                'quote' in description.lower()
-            ])
-
-            print(f"     Is quote: {is_quote}")
 
             quote_tweets.append({
                 'id': tweet_id,
@@ -270,16 +240,12 @@ def parse_rss_content(xml_content):
                 'quoted_text': clean_desc[:500],
                 'url': link or f"https://x.com/{X_USERNAME}/status/{tweet_id}"
             })
-
             print(f"     ✅ Added: {tweet_id}")
 
         return quote_tweets if quote_tweets else None
 
     except ET.ParseError as e:
-        print(f"  ❌ XML parse error: {str(e)}")
-        return None
-    except Exception as e:
-        print(f"  ❌ Unexpected error: {str(e)}")
+        print(f"  ❌ XML error: {str(e)}")
         return None
 
 # ============================================
@@ -295,22 +261,18 @@ def check_manual_tweets():
             content = f.read().strip()
 
         if not content or content == '[]':
-            print("  ℹ️  manual_tweets.json is empty")
+            print("  ℹ️  Empty")
             return None
 
         data = json.loads(content)
-
         if not data:
-            print("  ℹ️  No tweets in manual_tweets.json")
             return None
 
         print(f"  ✅ Found {len(data)} manual tweet(s)!")
 
-        # Validate each tweet has required fields
         valid_tweets = []
-        for i, tweet in enumerate(data):
+        for tweet in data:
             if not tweet.get('id'):
-                print(f"  ⚠️  Tweet {i+1} missing 'id' field, skipping")
                 continue
             if not tweet.get('url'):
                 tweet['url'] = f"https://x.com/{X_USERNAME}/status/{tweet['id']}"
@@ -320,18 +282,13 @@ def check_manual_tweets():
                 tweet['quoted_text'] = ''
             valid_tweets.append(tweet)
 
-        print(f"  ✅ {len(valid_tweets)} valid tweet(s) ready to process")
         return valid_tweets if valid_tweets else None
 
     except json.JSONDecodeError as e:
-        print(f"  ❌ JSON format error: {str(e)}")
-        print("  💡 Make sure your JSON is valid at jsonlint.com")
+        print(f"  ❌ JSON error: {str(e)}")
         return None
     except FileNotFoundError:
-        print("  ℹ️  manual_tweets.json not found")
-        return None
-    except Exception as e:
-        print(f"  ❌ Error: {str(e)}")
+        print("  ℹ️  File not found")
         return None
 
 # ============================================
@@ -339,10 +296,9 @@ def check_manual_tweets():
 # ============================================
 
 def research_topic(text):
-    """Research topic using DuckDuckGo"""
+    """Research using DuckDuckGo"""
     print("\n🔬 Researching topic...")
 
-    # Clean query - remove hashtags and URLs
     query = re.sub(r'#\w+', '', text)
     query = re.sub(r'http\S+', '', query)
     query = re.sub(r'\s+', ' ', query).strip()[:150]
@@ -386,40 +342,40 @@ def research_topic(text):
         return sources
 
     except Exception as e:
-        print(f"  ❌ Research error: {str(e)}")
+        print(f"  ❌ Error: {str(e)}")
         return []
 
 # ============================================
-# ARTICLE GENERATION
+# ARTICLE GENERATION - OPENAI
 # ============================================
 
 def generate_article(tweet, sources):
-    """Generate 300-word article using Gemini"""
-    print("\n✍️  Generating article...")
+    """Generate 300-word article using OpenAI GPT-4o mini"""
+    print("\n✍️  Generating article with ChatGPT...")
 
     sources_text = "\n".join([
         f"- {s['title']}: {s['snippet']} (URL: {s['url']})"
         for s in sources
     ]) if sources else "Use your general knowledge about this topic."
 
-    prompt = f"""You are a professional blogger and journalist. 
+    prompt = f"""You are a professional blogger and journalist.
 Write a well-researched 300-word article based on the following:
 
 TWEET: {tweet['text']}
 QUOTED CONTENT: {tweet.get('quoted_text', 'N/A')[:300]}
 RESEARCH SOURCES: {sources_text}
 
-Use this EXACT format - do not deviate:
+Use this EXACT format:
 
 Title: [Write an engaging, informative title here]
 
-[Opening paragraph - hook the reader, introduce the topic clearly]
+[Opening paragraph - hook the reader, introduce the topic]
 
-[Main paragraph - key facts, background, and important details]
+[Main paragraph - key facts, background, important details]
 
-[Supporting paragraph - additional context, implications, or analysis]
+[Supporting paragraph - additional context, implications]
 
-[Closing paragraph - conclusion, takeaway, or call to action]
+[Closing paragraph - conclusion and takeaway]
 
 References:
 1. [Source Name](URL)
@@ -427,16 +383,30 @@ References:
 
 Original Tweet: {tweet['url']}
 
-Remember: Exactly 300 words, professional tone, factual and informative.
+Important: Write exactly 300 words, professional tone, factual and informative.
 """
 
     try:
-        response = genai_client.models.generate_content(
-            model='gemini-2.0-flash',
-            contents=prompt
+        response = client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[
+                {
+                    "role": "system",
+                    "content": "You are a professional blogger who writes clear, informative articles."
+                },
+                {
+                    "role": "user",
+                    "content": prompt
+                }
+            ],
+            max_tokens=1000,
+            temperature=0.7
         )
+
+        article = response.choices[0].message.content
         print("  ✅ Article generated!")
-        return response.text
+        return article
+
     except Exception as e:
         print(f"  ❌ Generation error: {str(e)}")
         return None
@@ -453,7 +423,6 @@ def publish_to_wordpress(article, tweet):
         print("  ❌ No article to publish")
         return None
 
-    # Extract title and content
     lines = article.split('\n')
     title_line = next(
         (l for l in lines if l.strip().startswith('Title:')),
@@ -468,23 +437,18 @@ def publish_to_wordpress(article, tweet):
         title = f"Article: {tweet['text'][:60]}"
         content = article
 
-    # Remove ** bold markdown
+    # Convert markdown to HTML
     content = re.sub(r'\*\*([^*]+)\*\*', r'<strong>\1</strong>', content)
-
-    # Convert markdown links to HTML
     content = re.sub(
         r'\[([^\]]+)\]\(([^\)]+)\)',
         r'<a href="\2">\1</a>',
         content
     )
-
-    # Convert line breaks to HTML paragraphs
     content = content.replace('\n\n', '</p><p>')
     content = content.replace('\n', '<br>')
     content = f"<p>{content}</p>"
 
     print(f"  Title: {title[:70]}")
-    print(f"  Posting to: {WP_SITE_URL}/wp-json/wp/v2/posts")
 
     try:
         response = requests.post(
@@ -493,7 +457,7 @@ def publish_to_wordpress(article, tweet):
                 'title': title,
                 'content': content,
                 'status': 'publish',
-                'excerpt': f"Auto-generated article from tweet: {tweet['url']}"
+                'excerpt': f"Auto-generated from: {tweet['url']}"
             },
             auth=(WP_USERNAME, WP_PASSWORD),
             timeout=30
@@ -503,24 +467,18 @@ def publish_to_wordpress(article, tweet):
 
         if response.status_code in [200, 201]:
             result = response.json()
-            print(f"  ✅ Successfully published!")
-            print(f"  🔗 Post URL: {result.get('link')}")
+            print(f"  ✅ Published! → {result.get('link')}")
             return result
         elif response.status_code == 401:
-            print("  ❌ 401 Unauthorized - Check WP_USERNAME and WP_PASSWORD")
-            print(f"  Response: {response.text[:200]}")
-            return None
-        elif response.status_code == 403:
-            print("  ❌ 403 Forbidden - User may not have permission to post")
-            print(f"  Response: {response.text[:200]}")
+            print("  ❌ 401 - Check WP username and password")
+            print(f"  {response.text[:200]}")
             return None
         else:
-            print(f"  ❌ Failed with status {response.status_code}")
-            print(f"  Response: {response.text[:300]}")
+            print(f"  ❌ Failed: {response.text[:300]}")
             return None
 
     except Exception as e:
-        print(f"  ❌ Publish error: {str(e)}")
+        print(f"  ❌ Error: {str(e)}")
         return None
 
 # ============================================
@@ -528,44 +486,20 @@ def publish_to_wordpress(article, tweet):
 # ============================================
 
 def main():
-    print("🔄 Trying all methods to fetch tweets...\n")
+    print("🔄 Fetching tweets...\n")
 
-    # Try all methods in order
-    tweets = None
-
+    # Try all methods
     tweets = fetch_via_syndication()
-
     if not tweets:
-        tweets = fetch_via_twstalker()
-
+        tweets = fetch_via_rss_proxy()
     if not tweets:
         tweets = check_manual_tweets()
 
     if not tweets:
-        print("\n" + "="*50)
-        print("⚠️  COULD NOT FETCH TWEETS AUTOMATICALLY")
-        print("="*50)
-        print("""
-All automatic methods failed.
-
-MANUAL METHOD - Add your tweet to manual_tweets.json:
-[
-  {
-    "id": "YOUR_TWEET_ID",
-    "text": "Your tweet text #YourHashtag",
-    "quoted_text": "The text of the tweet you quoted",
-    "url": "https://x.com/yourusername/status/YOUR_TWEET_ID"
-  }
-]
-
-Get your tweet ID from the URL when you open your tweet.
-Example URL: https://x.com/username/status/1234567890123456789
-                                              ^^^^^^^^^^^^^^^^^^^
-                                              This is your tweet ID
-""")
+        print("\n⚠️  No tweets found. Add to manual_tweets.json to test.\n")
         return
 
-    # Filter already processed tweets
+    # Filter already processed
     processed_ids = [
         str(t['id']) if isinstance(t, dict) else str(t)
         for t in get_processed_tweets()
@@ -576,61 +510,55 @@ Example URL: https://x.com/username/status/1234567890123456789
         if str(t['id']) not in processed_ids
     ]
 
+    # Limit to 3 per run to avoid quota issues
+    if len(new_tweets) > 3:
+        print(f"⚠️  Found {len(new_tweets)} tweets, processing only 3 per run")
+        new_tweets = new_tweets[:3]
+
     if not new_tweets:
-        print(f"\n✅ All {len(tweets)} tweet(s) already processed! Nothing to do.\n")
+        print(f"\n✅ All tweets already processed!\n")
         return
 
-    print(f"\n📊 Found {len(new_tweets)} new tweet(s) to process!\n")
+    print(f"\n📊 Processing {len(new_tweets)} tweet(s)...\n")
 
-    # Process each tweet
     success_count = 0
     fail_count = 0
 
     for i, tweet in enumerate(new_tweets, 1):
         print(f"\n{'='*40}")
-        print(f"PROCESSING TWEET {i} of {len(new_tweets)}")
+        print(f"TWEET {i} of {len(new_tweets)}")
         print(f"{'='*40}")
         print(f"ID:   {tweet['id']}")
         print(f"Text: {tweet['text'][:100]}")
-        print(f"URL:  {tweet['url']}")
 
-        # Research the topic
-        research_text = tweet.get('quoted_text') or tweet['text']
-        sources = research_topic(research_text)
+        sources = research_topic(
+            tweet.get('quoted_text') or tweet['text']
+        )
         time.sleep(2)
 
-        # Generate article
         article = generate_article(tweet, sources)
         if not article:
-            print("⚠️  Skipping - article generation failed")
             fail_count += 1
             continue
 
-        # Publish to WordPress
         result = publish_to_wordpress(article, tweet)
         if result:
             save_processed_tweet(str(tweet['id']))
             success_count += 1
-            print(f"\n🎉 Tweet {i} successfully processed!")
+            print(f"\n🎉 Tweet {i} done!")
         else:
             fail_count += 1
-            print(f"\n❌ Tweet {i} failed to publish")
 
-        # Pause between tweets
         if i < len(new_tweets):
-            print("\n⏳ Waiting 3 seconds before next tweet...")
             time.sleep(3)
 
-    # Summary
     print("\n" + "="*50)
-    print("📊 FINAL SUMMARY")
+    print("📊 SUMMARY")
     print("="*50)
-    print(f"  ✅ Successfully processed: {success_count}")
-    print(f"  ❌ Failed: {fail_count}")
-    print(f"  📝 Total: {len(new_tweets)}")
+    print(f"  ✅ Success: {success_count}")
+    print(f"  ❌ Failed:  {fail_count}")
     print("="*50)
-    print("🎉 BOT RUN COMPLETE!")
-    print("="*50 + "\n")
+    print("🎉 BOT COMPLETE!\n")
 
 if __name__ == "__main__":
     main()
