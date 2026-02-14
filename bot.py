@@ -1,10 +1,10 @@
 import requests
-from bs4 import BeautifulSoup
 import json
 import os
 import google.generativeai as genai
 from datetime import datetime
 import time
+import tweepy
 
 # Configuration from GitHub Secrets
 X_USERNAME = os.getenv('X_USERNAME')
@@ -14,6 +14,12 @@ WP_USERNAME = os.getenv('WP_USERNAME')
 WP_PASSWORD = os.getenv('WP_PASSWORD')
 GEMINI_API_KEY = os.getenv('GEMINI_API_KEY')
 
+# X API credentials
+X_API_KEY = os.getenv('X_API_KEY')
+X_API_SECRET = os.getenv('X_API_SECRET')
+X_ACCESS_TOKEN = os.getenv('X_ACCESS_TOKEN')
+X_ACCESS_TOKEN_SECRET = os.getenv('X_ACCESS_TOKEN_SECRET')
+
 print(f"🤖 Bot starting for X user: @{X_USERNAME}")
 print(f"🔍 Looking for hashtag: {HASHTAG}")
 print(f"📝 Will post to: {WP_SITE_URL}")
@@ -21,6 +27,14 @@ print(f"📝 Will post to: {WP_SITE_URL}")
 # Initialize Gemini
 genai.configure(api_key=GEMINI_API_KEY)
 model = genai.GenerativeModel('gemini-pro')
+
+# Initialize X API (Twitter API v2)
+client = tweepy.Client(
+    consumer_key=X_API_KEY,
+    consumer_secret=X_API_SECRET,
+    access_token=X_ACCESS_TOKEN,
+    access_token_secret=X_ACCESS_TOKEN_SECRET
+)
 
 def get_processed_tweets():
     """Load already processed tweet IDs"""
@@ -44,116 +58,87 @@ def save_processed_tweet(tweet_id):
         json.dump(processed, f, indent=2)
     print(f"✅ Saved tweet {tweet_id} as processed")
 
-def scrape_x_profile():
-    """Scrape X profile via Nitter mirrors"""
-    nitter_instances = [
-        'https://nitter.poast.org',
-        'https://nitter.privacydev.net',
-        'https://nitter.net'
-    ]
-    
-    print(f"🔎 Searching for tweets from @{X_USERNAME}...")
-    
-    for instance in nitter_instances:
-        try:
-            url = f"{instance}/{X_USERNAME}"
-            print(f"  Trying {instance}...")
-            headers = {
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
-            }
-            response = requests.get(url, timeout=15, headers=headers)
-            
-            if response.status_code == 200:
-                print(f"  ✅ Successfully connected to {instance}")
-                tweets = parse_tweets(response.text)
-                if tweets:
-                    return tweets
-            else:
-                print(f"  ❌ Failed: Status {response.status_code}")
-        except Exception as e:
-            print(f"  ❌ Error: {str(e)[:50]}")
-            continue
-    
-    print("⚠️  Could not fetch tweets from any Nitter instance")
-    return []
+def get_user_id():
+    """Get user ID from username"""
+    try:
+        user = client.get_user(username=X_USERNAME)
+        if user.data:
+            print(f"  ✅ Found user ID: {user.data.id}")
+            return user.data.id
+        else:
+            print("  ❌ User not found")
+            return None
+    except Exception as e:
+        print(f"  ❌ Error getting user ID: {str(e)}")
+        return None
 
-def parse_tweets(html):
-    """Extract tweets from HTML"""
-    soup = BeautifulSoup(html, 'html.parser')
-    tweets = []
+def fetch_user_tweets():
+    """Fetch recent tweets using X API v2"""
+    print(f"🔎 Fetching tweets from @{X_USERNAME} using X API...")
     
-    # Find all tweet containers
-    tweet_divs = soup.find_all('div', class_='timeline-item')
-    print(f"  Found {len(tweet_divs)} total tweets on profile")
-    
-    for idx, tweet_div in enumerate(tweet_divs[:20], 1):  # Check last 20 tweets
-        try:
-            print(f"\n  Examining tweet #{idx}...")
+    try:
+        user_id = get_user_id()
+        if not user_id:
+            return []
+        
+        # Fetch user's tweets (last 100)
+        response = client.get_users_tweets(
+            id=user_id,
+            max_results=100,
+            tweet_fields=['created_at', 'text', 'referenced_tweets'],
+            expansions=['referenced_tweets.id']
+        )
+        
+        if not response.data:
+            print("  ⚠️  No tweets found")
+            return []
+        
+        print(f"  ✅ Found {len(response.data)} total tweets")
+        
+        # Filter for quote tweets with hashtag
+        quote_tweets = []
+        
+        for tweet in response.data:
+            # Check if it's a quote tweet
+            is_quote = False
+            quoted_tweet_id = None
             
-            # Get tweet text
-            text_elem = tweet_div.find('div', class_='tweet-content')
-            if not text_elem:
-                print(f"    ❌ No tweet content found")
-                continue
+            if tweet.referenced_tweets:
+                for ref in tweet.referenced_tweets:
+                    if ref.type == 'quoted':
+                        is_quote = True
+                        quoted_tweet_id = ref.id
+                        break
             
-            text = text_elem.get_text(strip=True)
-            print(f"    Text preview: {text[:80]}...")
+            # Check if it has the hashtag
+            has_hashtag = HASHTAG.lower() in tweet.text.lower()
             
-            # Check if it contains the hashtag
-            has_hashtag = HASHTAG.lower() in text.lower()
-            print(f"    Has hashtag {HASHTAG}: {has_hashtag}")
-            
-            if not has_hashtag:
-                continue
-            
-            # Check if it's a quote tweet - try multiple methods
-            quote_elem = tweet_div.find('div', class_='quote')
-            if not quote_elem:
-                # Try alternative: look for "replying to" or quoted content differently
-                quote_elem = tweet_div.find('div', class_='quote-text')
-            if not quote_elem:
-                # Try another alternative
-                quote_elem = tweet_div.find('a', class_='quote-link')
-            
-            is_quote = quote_elem is not None
-            print(f"    Is quote tweet: {is_quote}")
-            
-            if not is_quote:
-                print(f"    ⚠️  Has hashtag but not a quote tweet, skipping...")
-                continue
-            
-            # Extract tweet ID from link
-            link_elem = tweet_div.find('a', class_='tweet-link')
-            if not link_elem:
-                link_elem = tweet_div.find('a', class_='tweet-date')
-            
-            if link_elem:
-                tweet_url = link_elem.get('href', '')
-                tweet_id = tweet_url.split('/')[-1].replace('#m', '')
-            else:
-                print(f"    ❌ Could not find tweet link")
-                continue
-            
-            quoted_text = quote_elem.get_text(strip=True) if quote_elem else ""
-            
-            tweets.append({
-                'id': tweet_id,
-                'text': text,
-                'quoted_text': quoted_text,
-                'url': f"https://x.com/{X_USERNAME}/status/{tweet_id}"
-            })
-            
-            print(f"    ✅ FOUND VALID QUOTE TWEET!")
-            print(f"    Tweet ID: {tweet_id}")
-            
-        except Exception as e:
-            print(f"    ⚠️  Error parsing tweet: {str(e)}")
-            import traceback
-            traceback.print_exc()
-            continue
-    
-    print(f"\n🎯 Total quote tweets found with hashtag {HASHTAG}: {len(tweets)}")
-    return tweets
+            if is_quote and has_hashtag:
+                # Get the quoted tweet text
+                quoted_text = ""
+                if response.includes and 'tweets' in response.includes:
+                    for included_tweet in response.includes['tweets']:
+                        if included_tweet.id == quoted_tweet_id:
+                            quoted_text = included_tweet.text
+                            break
+                
+                quote_tweets.append({
+                    'id': tweet.id,
+                    'text': tweet.text,
+                    'quoted_text': quoted_text,
+                    'url': f"https://x.com/{X_USERNAME}/status/{tweet.id}"
+                })
+                
+                print(f"  ✅ Found quote tweet: {tweet.id}")
+        
+        print(f"🎯 Found {len(quote_tweets)} quote tweets with hashtag {HASHTAG}")
+        return quote_tweets
+        
+    except Exception as e:
+        print(f"  ❌ Error fetching tweets: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        return []
 
 def research_topic(tweet_text):
     """Research using DuckDuckGo"""
@@ -318,16 +303,16 @@ def main():
     print("🚀 X TO WORDPRESS BOT STARTED")
     print("="*50 + "\n")
     
-    # Get tweets
-    tweets = scrape_x_profile()
+    # Get tweets using X API
+    tweets = fetch_user_tweets()
     
     if not tweets:
         print("\n❌ No quote tweets found with hashtag. Exiting.\n")
         return
     
-    processed_ids = [t['id'] if isinstance(t, dict) else t for t in get_processed_tweets()]
+    processed_ids = [str(t['id']) if isinstance(t, dict) else str(t) for t in get_processed_tweets()]
     
-    new_tweets = [t for t in tweets if t['id'] not in processed_ids]
+    new_tweets = [t for t in tweets if str(t['id']) not in processed_ids]
     
     if not new_tweets:
         print(f"\n✅ All {len(tweets)} tweets already processed. Nothing to do!\n")
@@ -357,7 +342,7 @@ def main():
         result = publish_to_wordpress(article, tweet)
         
         if result:
-            save_processed_tweet(tweet['id'])
+            save_processed_tweet(str(tweet['id']))
             print("✅ Complete!")
         else:
             print("❌ Failed to publish")
