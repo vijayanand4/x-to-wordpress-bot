@@ -6,7 +6,7 @@ import time
 import re
 import base64
 import xml.etree.ElementTree as ET
-from openai import OpenAI
+from groq import Groq
 
 # ============================================
 # CONFIGURATION
@@ -16,7 +16,7 @@ HASHTAG = os.getenv('HASHTAG', '')
 WP_SITE_URL = os.getenv('WP_SITE_URL', '').rstrip('/')
 WP_USERNAME = os.getenv('WP_USERNAME', '')
 WP_PASSWORD = os.getenv('WP_PASSWORD', '')
-OPENAI_API_KEY = os.getenv('OPENAI_API_KEY', '')
+GROQ_API_KEY = os.getenv('GROQ_API_KEY', '')
 
 # ============================================
 # STARTUP
@@ -26,12 +26,12 @@ print("🚀 X TO WORDPRESS BOT STARTED")
 print("="*50 + "\n")
 
 print("🔍 Configuration Check:")
-print(f"  X Username:      {'✅' if X_USERNAME else '❌ MISSING'}")
-print(f"  Hashtag:         {'✅' if HASHTAG else '❌ MISSING'}")
-print(f"  WP Site URL:     {'✅' if WP_SITE_URL else '❌ MISSING'}")
-print(f"  WP Username:     {'✅' if WP_USERNAME else '❌ MISSING'}")
-print(f"  WP Password:     {'✅' if WP_PASSWORD else '❌ MISSING'}")
-print(f"  OpenAI API Key:  {'✅' if OPENAI_API_KEY else '❌ MISSING'}")
+print(f"  X Username:     {'✅' if X_USERNAME else '❌ MISSING'}")
+print(f"  Hashtag:        {'✅' if HASHTAG else '❌ MISSING'}")
+print(f"  WP Site URL:    {'✅' if WP_SITE_URL else '❌ MISSING'}")
+print(f"  WP Username:    {'✅' if WP_USERNAME else '❌ MISSING'}")
+print(f"  WP Password:    {'✅' if WP_PASSWORD else '❌ MISSING'}")
+print(f"  Groq API Key:   {'✅' if GROQ_API_KEY else '❌ MISSING'}")
 
 missing = []
 if not X_USERNAME: missing.append('X_USERNAME')
@@ -39,7 +39,7 @@ if not HASHTAG: missing.append('HASHTAG')
 if not WP_SITE_URL: missing.append('WP_SITE_URL')
 if not WP_USERNAME: missing.append('WP_USERNAME')
 if not WP_PASSWORD: missing.append('WP_PASSWORD')
-if not OPENAI_API_KEY: missing.append('OPENAI_API_KEY')
+if not GROQ_API_KEY: missing.append('GROQ_API_KEY')
 
 if missing:
     print(f"\n❌ MISSING SECRETS: {', '.join(missing)}")
@@ -47,12 +47,12 @@ if missing:
 
 print("\n✅ All secrets loaded!\n")
 
-# Initialize OpenAI
+# Initialize Groq
 try:
-    client = OpenAI(api_key=OPENAI_API_KEY)
-    print("✅ OpenAI initialized\n")
+    groq_client = Groq(api_key=GROQ_API_KEY)
+    print("✅ Groq AI initialized\n")
 except Exception as e:
-    print(f"❌ OpenAI init failed: {str(e)}")
+    print(f"❌ Groq init failed: {str(e)}")
     exit(1)
 
 # ============================================
@@ -178,7 +178,6 @@ def fetch_via_rss_proxy():
                 print("  ❌ Empty content")
                 return None
 
-            # Decode base64 if needed
             if content.startswith('data:'):
                 print("  📦 Decoding base64...")
                 try:
@@ -346,12 +345,12 @@ def research_topic(text):
         return []
 
 # ============================================
-# ARTICLE GENERATION - OPENAI
+# ARTICLE GENERATION - GROQ
 # ============================================
 
 def generate_article(tweet, sources):
-    """Generate 300-word article using OpenAI GPT-4o mini"""
-    print("\n✍️  Generating article with ChatGPT...")
+    """Generate 300-word article using Groq (Llama 3)"""
+    print("\n✍️  Generating article with Groq AI...")
 
     sources_text = "\n".join([
         f"- {s['title']}: {s['snippet']} (URL: {s['url']})"
@@ -387,12 +386,12 @@ Important: Write exactly 300 words, professional tone, factual and informative.
 """
 
     try:
-        response = client.chat.completions.create(
-            model="gpt-4o-mini",
+        response = groq_client.chat.completions.create(
+            model="llama3-8b-8192",
             messages=[
                 {
                     "role": "system",
-                    "content": "You are a professional blogger who writes clear, informative articles."
+                    "content": "You are a professional blogger who writes clear, informative 300-word articles."
                 },
                 {
                     "role": "user",
@@ -488,7 +487,6 @@ def publish_to_wordpress(article, tweet):
 def main():
     print("🔄 Fetching tweets...\n")
 
-    # Try all methods
     tweets = fetch_via_syndication()
     if not tweets:
         tweets = fetch_via_rss_proxy()
@@ -499,7 +497,6 @@ def main():
         print("\n⚠️  No tweets found. Add to manual_tweets.json to test.\n")
         return
 
-    # Filter already processed
     processed_ids = [
         str(t['id']) if isinstance(t, dict) else str(t)
         for t in get_processed_tweets()
@@ -510,9 +507,8 @@ def main():
         if str(t['id']) not in processed_ids
     ]
 
-    # Limit to 3 per run to avoid quota issues
     if len(new_tweets) > 3:
-        print(f"⚠️  Found {len(new_tweets)} tweets, processing only 3 per run")
+        print(f"⚠️  Found {len(new_tweets)} tweets, processing 3 per run")
         new_tweets = new_tweets[:3]
 
     if not new_tweets:
