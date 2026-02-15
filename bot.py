@@ -480,11 +480,19 @@ def publish_to_wordpress(article, tweet):
             )
 
             print(f"  WordPress Response: {response.status_code}")
-
             if response.status_code in [200, 201]:
-                result = response.json()
-                print(f"  ✅ Published! → {result.get('link')}")
-                return result
+                # Handle empty response body (common on InfinityFree)
+                try:
+                    result = response.json()
+                    print(f"  ✅ Published! → {result.get('link')}")
+                    return result
+                except json.JSONDecodeError:
+                    if response.text.strip() == '':
+                        print(f"  ✅ Published! (empty response but 200 OK)")
+                        print(f"  🔗 Check: {WP_SITE_URL}/?p=latest")
+                        return {'status': 'published', 'link': WP_SITE_URL}
+                    else:
+                        print(f"  ❌ Unexpected response: {response.text[:200]}")
             elif response.status_code == 401:
                 print("  ❌ 401 - Wrong username or password")
                 print(f"  {response.text[:200]}")
