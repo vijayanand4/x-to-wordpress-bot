@@ -25,11 +25,10 @@ jobs:
       - name: Run bot
         env:
           GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
-          WP_USERNAME: ${{ secrets.WP_USERNAME }}
-          WP_PASSWORD: ${{ secrets.WP_PASSWORD }}
-          WP_SITE_URL: ${{ secrets.WP_SITE_URL }}
           X_USERNAME: ${{ secrets.X_USERNAME }}
           HASHTAG: ${{ secrets.HASHTAG }}
+          BLOG_GITHUB_TOKEN: ${{ secrets.BLOG_GITHUB_TOKEN }}
+          BLOG_GITHUB_USERNAME: ${{ secrets.BLOG_GITHUB_USERNAME }}
         run: python bot.py
 
       - name: Save processed tweets
