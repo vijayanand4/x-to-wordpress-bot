@@ -143,31 +143,70 @@ def extract_from_syndication(data):
 # ============================================
 # METHOD 2: RSS PROXY
 # ============================================
-
 def fetch_via_rss_proxy():
-    print("\n📡 Method 2: RSS Proxy...")
-    nitter_url = f'https://nitter.net/{X_USERNAME}/rss'
-    proxy_url = f"https://api.allorigins.win/get?url={requests.utils.quote(nitter_url)}"
-    try:
-        response = requests.get(proxy_url, timeout=20)
-        print(f"  Status: {response.status_code}")
-        if response.status_code == 200:
-            data = response.json()
-            content = data.get('contents', '')
+    """Try multiple proxies to fetch RSS"""
+    print("\n📡 Method 2: RSS Proxy (trying multiple)...")
+
+    nitter_rss = f'https://nitter.net/{X_USERNAME}/rss'
+
+    # Multiple proxy services to try
+    proxies = [
+        f"https://api.allorigins.win/get?url={requests.utils.quote(nitter_rss)}",
+        f"https://api.codetabs.com/v1/proxy?quest={requests.utils.quote(nitter_rss)}",
+        f"https://corsproxy.io/?{requests.utils.quote(nitter_rss)}",
+        f"https://proxy.cors.sh/{nitter_rss}",
+    ]
+
+    for proxy_url in proxies:
+        try:
+            print(f"  Trying: {proxy_url[:60]}...")
+            response = requests.get(
+                proxy_url,
+                timeout=15,
+                headers={'User-Agent': 'Mozilla/5.0'}
+            )
+            print(f"  Status: {response.status_code}")
+
+            if response.status_code != 200:
+                continue
+
+            # Handle allorigins JSON wrapper
+            content = response.text
+            if 'allorigins' in proxy_url:
+                try:
+                    data = response.json()
+                    content = data.get('contents', '')
+                except:
+                    continue
+
             if not content:
-                print("  ❌ Empty")
-                return None
+                print("  ❌ Empty response")
+                continue
+
+            # Decode base64 if needed
             if content.startswith('data:'):
                 print("  📦 Decoding base64...")
-                base64_data = content.split(',', 1)[1]
-                content = base64.b64decode(base64_data).decode('utf-8')
-                print(f"  ✅ Decoded! ({len(content)} chars)")
+                try:
+                    base64_data = content.split(',', 1)[1]
+                    content = base64.b64decode(base64_data).decode('utf-8')
+                    print(f"  ✅ Decoded! ({len(content)} chars)")
+                except Exception as e:
+                    print(f"  ❌ Decode error: {str(e)}")
+                    continue
+
             if '<rss' in content or '<item>' in content:
-                print("  ✅ Valid RSS!")
-                return parse_rss_content(content)
-            print("  ❌ No RSS content")
-    except Exception as e:
-        print(f"  ❌ Error: {str(e)[:80]}")
+                print("  ✅ Valid RSS found!")
+                result = parse_rss_content(content)
+                if result:
+                    return result
+            else:
+                print(f"  ❌ No RSS in response")
+
+        except Exception as e:
+            print(f"  ❌ Error: {str(e)[:60]}")
+            continue
+
+    print("  ❌ All proxies failed")
     return None
 
 def parse_rss_content(xml_content):
