@@ -753,9 +753,9 @@ def main():
         if str(t['id']) not in processed_ids
     ]
 
-    if len(new_tweets) > 3:
-        print(f"⚠️  Found {len(new_tweets)} tweets, processing 3 per run")
-        new_tweets = new_tweets[:3]
+    if len(new_tweets) > 10:
+        print(f"⚠️  Found {len(new_tweets)} tweets, processing 10 per run")
+        new_tweets = new_tweets[:10]
 
     if not new_tweets:
         print(f"\n✅ All tweets already processed!\n")
