@@ -144,71 +144,69 @@ def extract_from_syndication(data):
 # METHOD 2: RSS PROXY
 # ============================================
 def fetch_via_rss_proxy():
-    """Try multiple proxies to fetch RSS"""
-    print("\n📡 Method 2: RSS Proxy (trying multiple)...")
+    """Try multiple Nitter instances directly"""
+    print("\n📡 Method 2: Direct Nitter Instances...")
 
-    nitter_rss = f'https://nitter.net/{X_USERNAME}/rss'
-
-    # Multiple proxy services to try
-    proxies = [
-        f"https://api.allorigins.win/get?url={requests.utils.quote(nitter_rss)}",
-        f"https://api.codetabs.com/v1/proxy?quest={requests.utils.quote(nitter_rss)}",
-        f"https://corsproxy.io/?{requests.utils.quote(nitter_rss)}",
-        f"https://proxy.cors.sh/{nitter_rss}",
+    nitter_instances = [
+        'https://nitter.net',
+        'https://nitter.poast.org',
+        'https://nitter.privacydev.net',
+        'https://nitter.lucabased.xyz',
+        'https://nitter.lunar.icu',
+        'https://nitter.rawbit.ninja',
+        'https://nitter.mint.lgbt',
+        'https://nitter.bus-hit.me',
+        'https://tweet.namejeff.com',
+        'https://nitter.nicfab.eu',
     ]
 
-    for proxy_url in proxies:
+    headers = {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+        'Accept': 'application/rss+xml, application/xml, text/xml, */*',
+        'Accept-Language': 'en-US,en;q=0.9',
+        'Cache-Control': 'no-cache',
+    }
+
+    for instance in nitter_instances:
+        rss_url = f"{instance}/{X_USERNAME}/rss"
         try:
-            print(f"  Trying: {proxy_url[:60]}...")
+            print(f"  Trying: {instance}...")
             response = requests.get(
-                proxy_url,
-                timeout=15,
-                headers={'User-Agent': 'Mozilla/5.0'}
+                rss_url,
+                headers=headers,
+                timeout=10,
+                allow_redirects=True
             )
             print(f"  Status: {response.status_code}")
 
             if response.status_code != 200:
                 continue
 
-            # Handle allorigins JSON wrapper
             content = response.text
-            if 'allorigins' in proxy_url:
-                try:
-                    data = response.json()
-                    content = data.get('contents', '')
-                except:
-                    continue
-
-            if not content:
-                print("  ❌ Empty response")
+            if not content or len(content) < 100:
+                print(f"  ❌ Empty or too short")
                 continue
 
-            # Decode base64 if needed
-            if content.startswith('data:'):
-                print("  📦 Decoding base64...")
-                try:
-                    base64_data = content.split(',', 1)[1]
-                    content = base64.b64decode(base64_data).decode('utf-8')
-                    print(f"  ✅ Decoded! ({len(content)} chars)")
-                except Exception as e:
-                    print(f"  ❌ Decode error: {str(e)}")
-                    continue
-
             if '<rss' in content or '<item>' in content:
-                print("  ✅ Valid RSS found!")
+                print(f"  ✅ Valid RSS from {instance}!")
                 result = parse_rss_content(content)
                 if result:
                     return result
+                else:
+                    print(f"  ⚠️  RSS parsed but no matching tweets")
             else:
-                print(f"  ❌ No RSS in response")
+                print(f"  ❌ Not RSS content")
 
+        except requests.exceptions.Timeout:
+            print(f"  ❌ Timeout")
+        except requests.exceptions.ConnectionError:
+            print(f"  ❌ Connection failed")
         except Exception as e:
             print(f"  ❌ Error: {str(e)[:60]}")
-            continue
 
-    print("  ❌ All proxies failed")
+    print("  ❌ All Nitter instances failed")
     return None
-
+    
 def parse_rss_content(xml_content):
     print("\n  🔍 Parsing RSS...")
     try:
