@@ -13,39 +13,38 @@ from groq import Groq
 # ============================================
 X_USERNAME = os.getenv('X_USERNAME', '')
 HASHTAG = os.getenv('HASHTAG', '')
-WP_SITE_URL = os.getenv('WP_SITE_URL', '').rstrip('/')
-WP_USERNAME = os.getenv('WP_USERNAME', '')
-WP_PASSWORD = os.getenv('WP_PASSWORD', '')
 GROQ_API_KEY = os.getenv('GROQ_API_KEY', '')
+BLOG_GITHUB_TOKEN = os.getenv('BLOG_GITHUB_TOKEN', '')
+BLOG_GITHUB_USERNAME = os.getenv('BLOG_GITHUB_USERNAME', '')
+BLOG_REPO = f"{BLOG_GITHUB_USERNAME}.github.io"
 
 # ============================================
 # STARTUP
 # ============================================
 print("\n" + "="*50)
-print("🚀 X TO WORDPRESS BOT STARTED")
+print("🚀 X TO GITHUB PAGES BOT STARTED")
 print("="*50 + "\n")
 
 print("🔍 Configuration Check:")
-print(f"  X Username:     {'✅' if X_USERNAME else '❌ MISSING'}")
-print(f"  Hashtag:        {'✅' if HASHTAG else '❌ MISSING'}")
-print(f"  WP Site URL:    {'✅' if WP_SITE_URL else '❌ MISSING'}")
-print(f"  WP Username:    {'✅' if WP_USERNAME else '❌ MISSING'}")
-print(f"  WP Password:    {'✅' if WP_PASSWORD else '❌ MISSING'}")
-print(f"  Groq API Key:   {'✅' if GROQ_API_KEY else '❌ MISSING'}")
+print(f"  X Username:          {'✅' if X_USERNAME else '❌ MISSING'}")
+print(f"  Hashtag:             {'✅' if HASHTAG else '❌ MISSING'}")
+print(f"  Groq API Key:        {'✅' if GROQ_API_KEY else '❌ MISSING'}")
+print(f"  Blog GitHub Token:   {'✅' if BLOG_GITHUB_TOKEN else '❌ MISSING'}")
+print(f"  Blog GitHub Username:{'✅' if BLOG_GITHUB_USERNAME else '❌ MISSING'}")
 
 missing = []
 if not X_USERNAME: missing.append('X_USERNAME')
 if not HASHTAG: missing.append('HASHTAG')
-if not WP_SITE_URL: missing.append('WP_SITE_URL')
-if not WP_USERNAME: missing.append('WP_USERNAME')
-if not WP_PASSWORD: missing.append('WP_PASSWORD')
 if not GROQ_API_KEY: missing.append('GROQ_API_KEY')
+if not BLOG_GITHUB_TOKEN: missing.append('BLOG_GITHUB_TOKEN')
+if not BLOG_GITHUB_USERNAME: missing.append('BLOG_GITHUB_USERNAME')
 
 if missing:
     print(f"\n❌ MISSING SECRETS: {', '.join(missing)}")
     exit(1)
 
-print("\n✅ All secrets loaded!\n")
+print(f"\n✅ All secrets loaded!")
+print(f"📝 Blog will publish to: https://{BLOG_REPO}\n")
 
 # Initialize Groq
 try:
@@ -54,6 +53,13 @@ try:
 except Exception as e:
     print(f"❌ Groq init failed: {str(e)}")
     exit(1)
+
+# GitHub API headers
+GITHUB_HEADERS = {
+    'Authorization': f'token {BLOG_GITHUB_TOKEN}',
+    'Accept': 'application/vnd.github.v3+json',
+    'Content-Type': 'application/json'
+}
 
 # ============================================
 # PROCESSED TWEETS
@@ -80,214 +86,146 @@ def save_processed_tweet(tweet_id):
     print(f"✅ Saved tweet {tweet_id}")
 
 # ============================================
-# METHOD 1: TWITTER SYNDICATION API
+# METHOD 1: TWITTER SYNDICATION
 # ============================================
 
 def fetch_via_syndication():
-    """Use Twitter syndication API - no auth needed"""
     print("\n📡 Method 1: Twitter Syndication API...")
-
     url = f"https://syndication.twitter.com/srv/timeline-profile/screen-name/{X_USERNAME}"
     headers = {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120.0.0.0 Safari/537.36',
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
         'Accept': 'application/json',
         'Referer': f'https://twitter.com/{X_USERNAME}'
     }
-
     try:
         response = requests.get(url, headers=headers, timeout=15)
         print(f"  Status: {response.status_code}")
-
         if response.status_code == 200 and response.text.strip():
             try:
                 data = response.json()
                 tweets = extract_from_syndication(data)
                 if tweets:
                     return tweets
-                else:
-                    print("  ⚠️  No matching tweets found")
             except json.JSONDecodeError as e:
-                print(f"  ❌ JSON parse error: {str(e)}")
+                print(f"  ❌ JSON error: {str(e)}")
         else:
-            print(f"  ❌ Empty or failed response")
-
+            print("  ❌ Empty or failed response")
     except Exception as e:
         print(f"  ❌ Error: {str(e)[:80]}")
-
     return None
 
 def extract_from_syndication(data):
-    """Extract quote tweets from syndication response"""
     try:
-        timeline = data.get('timeline', {})
-        entries = timeline.get('entries', [])
+        entries = data.get('timeline', {}).get('entries', [])
         print(f"  Found {len(entries)} entries")
-
         quote_tweets = []
         for entry in entries:
             tweet = entry.get('tweet', {})
             text = tweet.get('full_text', tweet.get('text', ''))
-
             if not text or HASHTAG.lower() not in text.lower():
                 continue
-
-            print(f"  📌 Found tweet with hashtag: {text[:60]}...")
-
             quoted = tweet.get('quoted_status', {})
             if not quoted:
-                print(f"     ⚠️  Not a quote tweet, skipping")
                 continue
-
             tweet_id = tweet.get('id_str', '')
-            quoted_text = quoted.get('full_text', quoted.get('text', ''))
-
             quote_tweets.append({
                 'id': tweet_id,
                 'text': text,
-                'quoted_text': quoted_text,
+                'quoted_text': quoted.get('full_text', quoted.get('text', '')),
                 'url': f"https://x.com/{X_USERNAME}/status/{tweet_id}"
             })
-            print(f"     ✅ Valid quote tweet: {tweet_id}")
-
+            print(f"  ✅ Found: {tweet_id}")
         return quote_tweets if quote_tweets else None
-
     except Exception as e:
         print(f"  ❌ Parse error: {str(e)}")
         return None
 
 # ============================================
-# METHOD 2: ALLORIGINS RSS PROXY
+# METHOD 2: RSS PROXY
 # ============================================
 
 def fetch_via_rss_proxy():
-    """Try allorigins proxy with base64 decode support"""
     print("\n📡 Method 2: RSS Proxy...")
-
     nitter_url = f'https://nitter.net/{X_USERNAME}/rss'
     proxy_url = f"https://api.allorigins.win/get?url={requests.utils.quote(nitter_url)}"
-
     try:
         response = requests.get(proxy_url, timeout=20)
         print(f"  Status: {response.status_code}")
-
         if response.status_code == 200:
             data = response.json()
             content = data.get('contents', '')
-
             if not content:
-                print("  ❌ Empty content")
+                print("  ❌ Empty")
                 return None
-
             if content.startswith('data:'):
                 print("  📦 Decoding base64...")
-                try:
-                    base64_data = content.split(',', 1)[1]
-                    content = base64.b64decode(base64_data).decode('utf-8')
-                    print(f"  ✅ Decoded! ({len(content)} chars)")
-                except Exception as e:
-                    print(f"  ❌ Decode error: {str(e)}")
-                    return None
-
+                base64_data = content.split(',', 1)[1]
+                content = base64.b64decode(base64_data).decode('utf-8')
+                print(f"  ✅ Decoded! ({len(content)} chars)")
             if '<rss' in content or '<item>' in content:
-                print("  ✅ Valid RSS found!")
+                print("  ✅ Valid RSS!")
                 return parse_rss_content(content)
-            else:
-                print(f"  ❌ No RSS content")
-
+            print("  ❌ No RSS content")
     except Exception as e:
         print(f"  ❌ Error: {str(e)[:80]}")
-
     return None
 
 def parse_rss_content(xml_content):
-    """Parse RSS XML and find tweets with hashtag"""
     print("\n  🔍 Parsing RSS...")
-
     try:
         root = ET.fromstring(xml_content)
         items = root.findall('.//item')
-        print(f"  Found {len(items)} items in RSS")
-
+        print(f"  Found {len(items)} items")
         if not items:
             return None
-
         quote_tweets = []
         for item in items:
-            title_elem = item.find('title')
-            desc_elem = item.find('description')
-            link_elem = item.find('link')
-
-            title = title_elem.text if title_elem is not None else ''
-            description = desc_elem.text if desc_elem is not None else ''
-            link = link_elem.text if link_elem is not None else ''
-
-            full_text = f"{title} {description}"
-
-            if HASHTAG.lower() not in full_text.lower():
+            title = item.findtext('title') or ''
+            description = item.findtext('description') or ''
+            link = item.findtext('link') or ''
+            if HASHTAG.lower() not in f"{title} {description}".lower():
                 continue
-
-            print(f"  📌 Found: {title[:60]}...")
-
             tweet_id = link.split('/')[-1].replace('#m', '') if link else str(int(time.time()))
-
             clean_desc = re.sub(r'<[^>]+>', ' ', description)
             clean_desc = re.sub(r'\s+', ' ', clean_desc).strip()
-
             quote_tweets.append({
                 'id': tweet_id,
                 'text': title,
                 'quoted_text': clean_desc[:500],
                 'url': link or f"https://x.com/{X_USERNAME}/status/{tweet_id}"
             })
-            print(f"     ✅ Added: {tweet_id}")
-
+            print(f"  ✅ Added: {tweet_id}")
         return quote_tweets if quote_tweets else None
-
     except ET.ParseError as e:
         print(f"  ❌ XML error: {str(e)}")
         return None
 
 # ============================================
-# METHOD 3: MANUAL TWEETS FILE
+# METHOD 3: MANUAL TWEETS
 # ============================================
 
 def check_manual_tweets():
-    """Read from manual_tweets.json as fallback"""
     print("\n📡 Method 3: Checking manual_tweets.json...")
-
     try:
         with open('manual_tweets.json', 'r') as f:
             content = f.read().strip()
-
         if not content or content == '[]':
             print("  ℹ️  Empty")
             return None
-
         data = json.loads(content)
         if not data:
             return None
-
         print(f"  ✅ Found {len(data)} manual tweet(s)!")
-
-        valid_tweets = []
         for tweet in data:
-            if not tweet.get('id'):
-                continue
             if not tweet.get('url'):
                 tweet['url'] = f"https://x.com/{X_USERNAME}/status/{tweet['id']}"
             if not tweet.get('text'):
                 tweet['text'] = HASHTAG
             if not tweet.get('quoted_text'):
                 tweet['quoted_text'] = ''
-            valid_tweets.append(tweet)
-
-        return valid_tweets if valid_tweets else None
-
-    except json.JSONDecodeError as e:
-        print(f"  ❌ JSON error: {str(e)}")
-        return None
-    except FileNotFoundError:
-        print("  ℹ️  File not found")
+        return data
+    except Exception as e:
+        print(f"  ❌ Error: {str(e)}")
         return None
 
 # ============================================
@@ -295,40 +233,27 @@ def check_manual_tweets():
 # ============================================
 
 def research_topic(text):
-    """Research using DuckDuckGo"""
     print("\n🔬 Researching topic...")
-
     query = re.sub(r'#\w+', '', text)
     query = re.sub(r'http\S+', '', query)
     query = re.sub(r'\s+', ' ', query).strip()[:150]
-
     if not query:
         query = text[:150]
-
     print(f"  Query: {query[:80]}")
-
     try:
         response = requests.get(
             "https://api.duckduckgo.com/",
-            params={
-                'q': query,
-                'format': 'json',
-                'no_html': 1,
-                'skip_disambig': 1
-            },
+            params={'q': query, 'format': 'json', 'no_html': 1, 'skip_disambig': 1},
             timeout=10
         )
-
         data = response.json()
         sources = []
-
         if data.get('AbstractURL'):
             sources.append({
                 'title': data.get('AbstractSource', 'Source'),
                 'url': data.get('AbstractURL'),
                 'snippet': data.get('AbstractText', '')[:300]
             })
-
         for topic in data.get('RelatedTopics', [])[:4]:
             if isinstance(topic, dict) and topic.get('FirstURL'):
                 sources.append({
@@ -336,10 +261,8 @@ def research_topic(text):
                     'url': topic.get('FirstURL'),
                     'snippet': topic.get('Text', '')[:300]
                 })
-
         print(f"  ✅ Found {len(sources)} sources")
         return sources
-
     except Exception as e:
         print(f"  ❌ Error: {str(e)}")
         return []
@@ -349,78 +272,65 @@ def research_topic(text):
 # ============================================
 
 def generate_article(tweet, sources):
-    """Generate 300-word article using Groq"""
     print("\n✍️  Generating article with Groq AI...")
-
     sources_text = "\n".join([
         f"- {s['title']}: {s['snippet']} (URL: {s['url']})"
         for s in sources
-    ]) if sources else "Use your general knowledge about this topic."
+    ]) if sources else "Use your general knowledge."
 
-    prompt = f"""You are a professional blogger and journalist.
-Write a well-researched 300-word article based on the following:
+    prompt = f"""You are a professional blogger. Write a 300-word article.
 
 TWEET: {tweet['text']}
 QUOTED CONTENT: {tweet.get('quoted_text', 'N/A')[:300]}
-RESEARCH SOURCES: {sources_text}
+SOURCES: {sources_text}
 
-Use this EXACT format:
+EXACT FORMAT:
+Title: [Engaging title]
 
-Title: [Write an engaging informative title here]
+[Opening paragraph]
 
-[Opening paragraph - hook the reader introduce the topic]
+[Main paragraph with key facts]
 
-[Main paragraph - key facts background important details]
+[Supporting paragraph with context]
 
-[Supporting paragraph - additional context implications]
-
-[Closing paragraph - conclusion and takeaway]
+[Closing paragraph with takeaway]
 
 References:
 1. [Source Name](URL)
 2. [Source Name](URL)
 
 Original Tweet: {tweet['url']}
-
-Important: Write exactly 300 words professional tone factual and informative.
 """
-
     try:
         response = groq_client.chat.completions.create(
             model="llama-3.3-70b-versatile",
             messages=[
-                {
-                    "role": "system",
-                    "content": "You are a professional blogger who writes clear informative 300-word articles."
-                },
-                {
-                    "role": "user",
-                    "content": prompt
-                }
+                {"role": "system", "content": "You are a professional blogger writing 300-word articles."},
+                {"role": "user", "content": prompt}
             ],
             max_tokens=1000,
             temperature=0.7
         )
-
         article = response.choices[0].message.content
         print("  ✅ Article generated!")
         return article
-
     except Exception as e:
-        print(f"  ❌ Generation error: {str(e)}")
+        print(f"  ❌ Error: {str(e)}")
         return None
 
 # ============================================
-# WORDPRESS PUBLISHING
+# GITHUB PAGES PUBLISHING
 # ============================================
 
-def publish_to_wordpress(article, tweet):
-    """Publish article to WordPress via REST API with retries"""
-    print("\n📤 Publishing to WordPress...")
+def slugify(text):
+    """Convert title to URL-friendly slug"""
+    text = text.lower()
+    text = re.sub(r'[^a-z0-9\s-]', '', text)
+    text = re.sub(r'\s+', '-', text.strip())
+    return text[:60]
 
-    if not article:
-        print("  ❌ No article to publish")
-        return None
+def create_article_html(article, tweet):
+    """Convert article text to HTML page"""
 
     lines = article.split('\n')
     title_line = next(
@@ -440,83 +350,344 @@ def publish_to_wordpress(article, tweet):
     content = re.sub(r'\*\*([^*]+)\*\*', r'<strong>\1</strong>', content)
     content = re.sub(
         r'\[([^\]]+)\]\(([^\)]+)\)',
-        r'<a href="\2">\1</a>',
+        r'<a href="\2" target="_blank">\1</a>',
         content
     )
-    content = content.replace('\n\n', '</p><p>')
-    content = content.replace('\n', '<br>')
-    content = f"<p>{content}</p>"
 
-    print(f"  Title: {title[:70]}")
-    print(f"  Posting to: {WP_SITE_URL}/wp-json/wp/v2/posts")
+    paragraphs = content.split('\n\n')
+    html_paragraphs = ''.join(
+        f'<p>{p.strip().replace(chr(10), "<br>")}</p>\n'
+        for p in paragraphs if p.strip()
+    )
 
-    # Try up to 3 times
-    for attempt in range(1, 4):
-        try:
-            print(f"  Attempt {attempt} of 3...")
+    date_str = datetime.now().strftime('%B %d, %Y')
 
-            if attempt > 1:
-                print(f"  Waiting 15 seconds before retry...")
-                time.sleep(15)
+    html = f"""<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{title}</title>
+    <style>
+        * {{ margin: 0; padding: 0; box-sizing: border-box; }}
+        body {{
+            font-family: Georgia, 'Times New Roman', serif;
+            line-height: 1.8;
+            color: #333;
+            background: #fafafa;
+        }}
+        header {{
+            background: #1a1a2e;
+            color: white;
+            padding: 20px 40px;
+        }}
+        header a {{
+            color: #e0e0e0;
+            text-decoration: none;
+            font-size: 14px;
+        }}
+        header a:hover {{ color: white; }}
+        .article-container {{
+            max-width: 800px;
+            margin: 40px auto;
+            padding: 0 20px;
+        }}
+        .article-header {{
+            margin-bottom: 30px;
+            border-bottom: 3px solid #1a1a2e;
+            padding-bottom: 20px;
+        }}
+        h1 {{
+            font-size: 2em;
+            color: #1a1a2e;
+            line-height: 1.3;
+            margin-bottom: 10px;
+        }}
+        .meta {{
+            color: #888;
+            font-size: 14px;
+            font-family: Arial, sans-serif;
+        }}
+        .content p {{
+            margin-bottom: 20px;
+            font-size: 1.1em;
+        }}
+        .content a {{
+            color: #1a1a2e;
+        }}
+        .source-tweet {{
+            background: #f0f4ff;
+            border-left: 4px solid #1a1a2e;
+            padding: 15px 20px;
+            margin: 30px 0;
+            border-radius: 0 8px 8px 0;
+        }}
+        .source-tweet p {{
+            margin: 0;
+            font-size: 0.95em;
+        }}
+        .source-tweet a {{
+            color: #1a1a2e;
+            font-weight: bold;
+        }}
+        footer {{
+            text-align: center;
+            padding: 40px;
+            color: #888;
+            font-family: Arial, sans-serif;
+            font-size: 13px;
+            border-top: 1px solid #eee;
+            margin-top: 60px;
+        }}
+    </style>
+</head>
+<body>
+    <header>
+        <a href="/">← Back to Home</a>
+    </header>
 
-            session = requests.Session()
-            session.headers.update({
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)',
-                'Connection': 'close',
-                'Content-Type': 'application/json'
-            })
+    <div class="article-container">
+        <div class="article-header">
+            <h1>{title}</h1>
+            <p class="meta">Published on {date_str} • Auto-researched article</p>
+        </div>
 
-            response = session.post(
-                f"{WP_SITE_URL}/wp-json/wp/v2/posts",
-                json={
-                    'title': title,
-                    'content': content,
-                    'status': 'publish',
-                    'excerpt': f"Auto-generated from: {tweet['url']}"
-                },
-                auth=(WP_USERNAME, WP_PASSWORD),
-                timeout=60,
-                verify=True
-            )
+        <div class="content">
+            {html_paragraphs}
+        </div>
 
-            print(f"  WordPress Response: {response.status_code}")
-            if response.status_code in [200, 201]:
-                # Handle empty response body (common on InfinityFree)
-                try:
-                    result = response.json()
-                    print(f"  ✅ Published! → {result.get('link')}")
-                    return result
-                except json.JSONDecodeError:
-                    if response.text.strip() == '':
-                        print(f"  ✅ Published! (empty response but 200 OK)")
-                        print(f"  🔗 Check: {WP_SITE_URL}/?p=latest")
-                        return {'status': 'published', 'link': WP_SITE_URL}
-                    else:
-                        print(f"  ❌ Unexpected response: {response.text[:200]}")
-            elif response.status_code == 401:
-                print("  ❌ 401 - Wrong username or password")
-                print(f"  {response.text[:200]}")
-                return None
-            elif response.status_code == 403:
-                print("  ❌ 403 - Permission denied")
-                print(f"  {response.text[:200]}")
-                return None
-            elif response.status_code == 500:
-                print("  ❌ 500 - WordPress server error")
-                print(f"  {response.text[:200]}")
-            else:
-                print(f"  ❌ Failed: {response.status_code}")
-                print(f"  {response.text[:200]}")
+        <div class="source-tweet">
+            <p>📌 <strong>Source Tweet:</strong> <a href="{tweet['url']}" target="_blank">{tweet['url']}</a></p>
+        </div>
+    </div>
 
-        except requests.exceptions.ConnectionError as e:
-            print(f"  ❌ Connection error: {str(e)[:100]}")
-        except requests.exceptions.Timeout:
-            print(f"  ❌ Timeout - server took too long")
-        except Exception as e:
-            print(f"  ❌ Error: {str(e)[:100]}")
+    <footer>
+        <p>Auto-generated article • {date_str}</p>
+    </footer>
+</body>
+</html>"""
 
-    print("  ❌ All 3 attempts failed")
-    return None
+    return title, html
+
+def get_existing_articles():
+    """Get list of existing articles from GitHub"""
+    url = f"https://api.github.com/repos/{BLOG_GITHUB_USERNAME}/{BLOG_REPO}/contents/articles"
+    try:
+        response = requests.get(url, headers=GITHUB_HEADERS, timeout=10)
+        if response.status_code == 200:
+            files = response.json()
+            return [f['name'].replace('.html', '') for f in files if f['name'].endswith('.html')]
+        return []
+    except:
+        return []
+
+def publish_to_github_pages(article, tweet):
+    """Publish article as HTML file to GitHub Pages"""
+    print("\n📤 Publishing to GitHub Pages...")
+
+    title, html_content = create_article_html(article, tweet)
+    slug = slugify(title)
+    filename = f"{slug}-{tweet['id'][:8]}.html"
+    filepath = f"articles/{filename}"
+
+    print(f"  Title: {title[:60]}")
+    print(f"  File: {filepath}")
+
+    # Encode content to base64
+    encoded_content = base64.b64encode(html_content.encode('utf-8')).decode('utf-8')
+
+    # Check if file exists
+    check_url = f"https://api.github.com/repos/{BLOG_GITHUB_USERNAME}/{BLOG_REPO}/contents/{filepath}"
+    check_response = requests.get(check_url, headers=GITHUB_HEADERS)
+
+    payload = {
+        'message': f'Add article: {title[:50]}',
+        'content': encoded_content,
+        'branch': 'main'
+    }
+
+    if check_response.status_code == 200:
+        payload['sha'] = check_response.json()['sha']
+
+    try:
+        response = requests.put(
+            check_url,
+            headers=GITHUB_HEADERS,
+            json=payload,
+            timeout=30
+        )
+
+        print(f"  GitHub Response: {response.status_code}")
+
+        if response.status_code in [200, 201]:
+            article_url = f"https://{BLOG_REPO}/articles/{filename}"
+            print(f"  ✅ Published! → {article_url}")
+            update_homepage(title, filename, tweet)
+            return {'link': article_url, 'title': title}
+        else:
+            print(f"  ❌ Failed: {response.text[:300]}")
+            return None
+
+    except Exception as e:
+        print(f"  ❌ Error: {str(e)}")
+        return None
+
+def update_homepage(new_title, new_filename, tweet):
+    """Update the blog homepage with new article"""
+    print("  📝 Updating homepage...")
+
+    # Get existing index.html
+    index_url = f"https://api.github.com/repos/{BLOG_GITHUB_USERNAME}/{BLOG_REPO}/contents/index.html"
+    existing_sha = None
+    existing_articles_html = ""
+
+    response = requests.get(index_url, headers=GITHUB_HEADERS)
+    if response.status_code == 200:
+        existing_sha = response.json()['sha']
+        existing_content = base64.b64decode(response.json()['content']).decode('utf-8')
+        # Extract existing articles list
+        match = re.search(r'<ul class="articles-list">(.*?)</ul>', existing_content, re.DOTALL)
+        if match:
+            existing_articles_html = match.group(1).strip()
+
+    # Add new article to top of list
+    date_str = datetime.now().strftime('%B %d, %Y')
+    new_item = f'''        <li>
+            <span class="date">{date_str}</span>
+            <a href="articles/{new_filename}">{new_title}</a>
+            <span class="source"><a href="{tweet['url']}" target="_blank">source tweet</a></span>
+        </li>'''
+
+    updated_list = new_item + "\n" + existing_articles_html
+
+    homepage_html = f"""<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>My Research Blog</title>
+    <style>
+        * {{ margin: 0; padding: 0; box-sizing: border-box; }}
+        body {{
+            font-family: Arial, sans-serif;
+            background: #fafafa;
+            color: #333;
+        }}
+        header {{
+            background: #1a1a2e;
+            color: white;
+            padding: 40px;
+            text-align: center;
+        }}
+        header h1 {{
+            font-size: 2.5em;
+            margin-bottom: 10px;
+        }}
+        header p {{
+            color: #aaa;
+            font-size: 1.1em;
+        }}
+        .container {{
+            max-width: 800px;
+            margin: 40px auto;
+            padding: 0 20px;
+        }}
+        h2 {{
+            font-size: 1.4em;
+            color: #1a1a2e;
+            margin-bottom: 20px;
+            padding-bottom: 10px;
+            border-bottom: 2px solid #1a1a2e;
+        }}
+        .articles-list {{
+            list-style: none;
+        }}
+        .articles-list li {{
+            padding: 15px 0;
+            border-bottom: 1px solid #eee;
+            display: flex;
+            align-items: baseline;
+            gap: 15px;
+            flex-wrap: wrap;
+        }}
+        .articles-list a {{
+            color: #1a1a2e;
+            text-decoration: none;
+            font-size: 1.05em;
+            font-weight: bold;
+            flex: 1;
+        }}
+        .articles-list a:hover {{
+            text-decoration: underline;
+        }}
+        .date {{
+            color: #888;
+            font-size: 13px;
+            white-space: nowrap;
+        }}
+        .source {{
+            font-size: 12px;
+            color: #888;
+        }}
+        .source a {{
+            color: #888;
+            font-weight: normal !important;
+        }}
+        .empty {{
+            text-align: center;
+            padding: 60px;
+            color: #888;
+        }}
+        footer {{
+            text-align: center;
+            padding: 40px;
+            color: #888;
+            font-size: 13px;
+            border-top: 1px solid #eee;
+            margin-top: 40px;
+        }}
+    </style>
+</head>
+<body>
+    <header>
+        <h1>📰 My Research Blog</h1>
+        <p>Auto-researched articles from X/Twitter</p>
+    </header>
+
+    <div class="container">
+        <h2>Latest Articles</h2>
+        <ul class="articles-list">
+{updated_list}
+        </ul>
+    </div>
+
+    <footer>
+        <p>Powered by X → GitHub Pages Bot</p>
+    </footer>
+</body>
+</html>"""
+
+    encoded = base64.b64encode(homepage_html.encode('utf-8')).decode('utf-8')
+
+    payload = {
+        'message': f'Update homepage with: {new_title[:40]}',
+        'content': encoded,
+        'branch': 'main'
+    }
+    if existing_sha:
+        payload['sha'] = existing_sha
+
+    response = requests.put(
+        index_url,
+        headers=GITHUB_HEADERS,
+        json=payload,
+        timeout=30
+    )
+
+    if response.status_code in [200, 201]:
+        print(f"  ✅ Homepage updated!")
+    else:
+        print(f"  ❌ Homepage update failed: {response.text[:200]}")
 
 # ============================================
 # MAIN
@@ -532,7 +703,7 @@ def main():
         tweets = check_manual_tweets()
 
     if not tweets:
-        print("\n⚠️  No tweets found. Add to manual_tweets.json to test.\n")
+        print("\n⚠️  No tweets found.\n")
         return
 
     processed_ids = [
@@ -545,7 +716,6 @@ def main():
         if str(t['id']) not in processed_ids
     ]
 
-    # Limit to 3 per run
     if len(new_tweets) > 3:
         print(f"⚠️  Found {len(new_tweets)} tweets, processing 3 per run")
         new_tweets = new_tweets[:3]
@@ -566,9 +736,7 @@ def main():
         print(f"ID:   {tweet['id']}")
         print(f"Text: {tweet['text'][:100]}")
 
-        sources = research_topic(
-            tweet.get('quoted_text') or tweet['text']
-        )
+        sources = research_topic(tweet.get('quoted_text') or tweet['text'])
         time.sleep(2)
 
         article = generate_article(tweet, sources)
@@ -576,17 +744,16 @@ def main():
             fail_count += 1
             continue
 
-        result = publish_to_wordpress(article, tweet)
+        result = publish_to_github_pages(article, tweet)
         if result:
             save_processed_tweet(str(tweet['id']))
             success_count += 1
-            print(f"\n🎉 Tweet {i} done!")
+            print(f"\n🎉 Tweet {i} done! → {result['link']}")
         else:
             fail_count += 1
 
         if i < len(new_tweets):
-            print("\n⏳ Waiting 5 seconds...")
-            time.sleep(5)
+            time.sleep(3)
 
     print("\n" + "="*50)
     print("📊 SUMMARY")
