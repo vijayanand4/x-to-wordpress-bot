@@ -29,6 +29,7 @@ jobs:
           HASHTAG: ${{ secrets.HASHTAG }}
           BLOG_GITHUB_TOKEN: ${{ secrets.BLOG_GITHUB_TOKEN }}
           BLOG_GITHUB_USERNAME: ${{ secrets.BLOG_GITHUB_USERNAME }}
+          BLOG_REPO_NAME: ${{ secrets.BLOG_REPO_NAME }}
         run: python bot.py
 
       - name: Save processed tweets
