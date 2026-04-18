@@ -16,8 +16,9 @@ HASHTAG = os.getenv('HASHTAG', '')
 GROQ_API_KEY = os.getenv('GROQ_API_KEY', '')
 BLOG_GITHUB_TOKEN = os.getenv('BLOG_GITHUB_TOKEN', '')
 BLOG_GITHUB_USERNAME = os.getenv('BLOG_GITHUB_USERNAME', '')
-BLOG_REPO = f"{BLOG_GITHUB_USERNAME}.github.io"
-
+# BLOG_REPO = f"{BLOG_GITHUB_USERNAME}.github.io"
+BLOG_REPO_NAME = os.getenv('BLOG_REPO_NAME', '')
+BLOG_REPO = BLOG_REPO_NAME
 # ============================================
 # STARTUP
 # ============================================
@@ -31,6 +32,7 @@ print(f"  Hashtag:             {'✅' if HASHTAG else '❌ MISSING'}")
 print(f"  Groq API Key:        {'✅' if GROQ_API_KEY else '❌ MISSING'}")
 print(f"  Blog GitHub Token:   {'✅' if BLOG_GITHUB_TOKEN else '❌ MISSING'}")
 print(f"  Blog GitHub Username:{'✅' if BLOG_GITHUB_USERNAME else '❌ MISSING'}")
+print(f"  Blog Repo Name:      {'✅' if BLOG_REPO_NAME else '❌ MISSING'}")
 
 missing = []
 if not X_USERNAME: missing.append('X_USERNAME')
@@ -38,13 +40,15 @@ if not HASHTAG: missing.append('HASHTAG')
 if not GROQ_API_KEY: missing.append('GROQ_API_KEY')
 if not BLOG_GITHUB_TOKEN: missing.append('BLOG_GITHUB_TOKEN')
 if not BLOG_GITHUB_USERNAME: missing.append('BLOG_GITHUB_USERNAME')
-
+if not BLOG_REPO_NAME: missing.append('BLOG_REPO_NAME')
+    
 if missing:
     print(f"\n❌ MISSING SECRETS: {', '.join(missing)}")
     exit(1)
 
 print(f"\n✅ All secrets loaded!")
-print(f"📝 Blog will publish to: https://{BLOG_REPO}\n")
+# print(f"📝 Blog will publish to: https://{BLOG_REPO}\n")
+print(f"📝 Blog will publish to: https://{BLOG_GITHUB_USERNAME}.github.io/{BLOG_REPO_NAME}/\n")
 
 # Initialize Groq
 try:
