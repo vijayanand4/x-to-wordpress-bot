@@ -372,7 +372,7 @@ def slugify(text):
 
 def create_article_html(article, tweet):
     """Convert article text to HTML page"""
-
+    blog_home = f"/{BLOG_REPO_NAME}/" if BLOG_REPO_NAME else "/"
     lines = article.split('\n')
     title_line = next(
         (l for l in lines if l.strip().startswith('Title:')),
@@ -484,7 +484,7 @@ def create_article_html(article, tweet):
 </head>
 <body>
     <header>
-        <a href="/">← Back to Home</a>
+        <a href="{blog_home}">← Back to Home</a>
     </header>
 
     <div class="article-container">
